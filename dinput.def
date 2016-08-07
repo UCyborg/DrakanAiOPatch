@@ -1,0 +1,4 @@
+LIBRARY dinput
+
+EXPORTS
+DirectInputCreateA = _DirectInputCreate @1
