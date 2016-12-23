@@ -1,4 +1,2 @@
-LIBRARY dinput
-
 EXPORTS
-DirectInputCreateA = _DirectInputCreate @1
+DirectInputCreateA = FDirectInputCreate @1

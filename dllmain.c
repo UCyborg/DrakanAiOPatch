@@ -7,15 +7,17 @@
 #pragma comment(lib, "ddraw.lib")
 #pragma comment(lib, "detours.lib")
 
+#define NAKED __declspec(naked)
+
 DETOUR_TRAMPOLINE(LONG WINAPI O_RegSetValueEx(HKEY hKey, LPCTSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE *lpData, DWORD cbData), RegSetValueEx);
 LONG WINAPI H_RegSetValueEx(HKEY hKey, LPCTSTR lpValueName, DWORD Reserved, DWORD dwType, /*const*/ BYTE *lpData, DWORD cbData)
 {
 	if (!strcmp(lpValueName, "Settings101"))
 	{
-		if ((*(DWORD *)0x487A2C))
+		if (*(PDWORD_PTR)0x487A2C)
 		{
 			// this updates fullscreen/windowed flag on exit as the game doesn't do it
-			lpData[32] ^= (-!(*(BYTE *)((*(DWORD *)0x487A2C) + 0x30) & 2) ^ lpData[32]) & 1;
+			lpData[32] ^= (-!(*(PBYTE)((*(PDWORD_PTR)0x487A2C) + 0x30) & 2) ^ lpData[32]) & 1;
 		}
 	}
 	return O_RegSetValueEx(hKey, lpValueName, Reserved, dwType, lpData, cbData);
@@ -48,18 +50,15 @@ HRESULT WINAPI EnumModesCallback(LPDDSURFACEDESC lpDDSurfaceDesc, LPVOID lpConte
 
 int CompareDisplayModes(const void *p, const void *q)
 {
-	int pp = (int)((displaymode_t *)p)->width * (int)((displaymode_t *)p)->height;
-	int qq = (int)((displaymode_t *)q)->width * (int)((displaymode_t *)q)->height;
+	int pp = (int)(((displaymode_t *)p)->width * ((displaymode_t *)p)->height);
+	int qq = (int)(((displaymode_t *)q)->width * ((displaymode_t *)q)->height);
 
 	return (pp - qq);
 }
 
 // because Win95 doesn't have this :P
-typedef HMONITOR (WINAPI *MonitorFromWindow_)(HWND, DWORD);
-typedef BOOL (WINAPI *GetMonitorInfo_)(HMONITOR, LPMONITORINFO);
-
-MonitorFromWindow_ MonitorFromWindow__;
-GetMonitorInfo_ GetMonitorInfo__;
+HMONITOR (WINAPI *PTR_MonitorFromWindow)(HWND, DWORD);
+BOOL (WINAPI *PTR_GetMonitorInfo)(HMONITOR, LPMONITORINFO);
 
 /*
 *****************************************************************
@@ -90,7 +89,7 @@ BOOL WINAPI H_AdjustWindowRectEx(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD
 	HWND hWnd;
 
 	// dedicated server is running
-	if ((*(DWORD *)0x487E18))
+	if (*(PDWORD)0x487E18)
 	{
 		return O_AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle);
 	}
@@ -98,34 +97,34 @@ BOOL WINAPI H_AdjustWindowRectEx(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD
 	// we need the window handle to work with
 	__asm
 	{
-		mov eax, dword ptr ss:[ebp + 4h];
-		mov dword ptr ss:[hWnd], eax;
+		mov eax, dword ptr ss:[ebp + 4h]
+		mov dword ptr ss:[hWnd], eax
 	}
 
 	// if we're in fullscreeen mode
-	if ((*(BYTE *)((*(DWORD *)0x487A2C) + 0x30) & 2))
+	if (*(PBYTE)((*(PDWORD_PTR)0x487A2C) + 0x30) & 2)
 	{
 		if (dwStyle & WS_POPUP)
 		{
 			dwStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
-			SetWindowLong(hWnd, GWL_STYLE, dwStyle);
+			SetWindowLongPtr(hWnd, GWL_STYLE, dwStyle);
 			windowFlags = 1;
 		}
 		return O_AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle);
 	}
 
 	// figure out dimensions of the monitor on which our window resides
-	if (MonitorFromWindow__)
+	if (PTR_MonitorFromWindow)
 	{
 		HMONITOR hMonitor;
 		MONITORINFO hInfo;
 
-		hMonitor = MonitorFromWindow__(hWnd, MONITOR_DEFAULTTONEAREST);
+		hMonitor = PTR_MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
 		hInfo.cbSize = sizeof(MONITORINFO);
-		GetMonitorInfo__(hMonitor, &hInfo);
+		PTR_GetMonitorInfo(hMonitor, &hInfo);
 
-		currentWidth = (int)hInfo.rcMonitor.right - (int)hInfo.rcMonitor.left;
-		currentHeight = (int)hInfo.rcMonitor.bottom - (int)hInfo.rcMonitor.top;
+		currentWidth = (int)(hInfo.rcMonitor.right - hInfo.rcMonitor.left);
+		currentHeight = (int)(hInfo.rcMonitor.bottom - hInfo.rcMonitor.top);
 	}
 	else
 	{
@@ -145,7 +144,7 @@ BOOL WINAPI H_AdjustWindowRectEx(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD
 			if (dwStyle & WS_CAPTION)
 			{
 				dwStyle = WS_POPUP | WS_VISIBLE;
-				SetWindowLong(hWnd, GWL_STYLE, dwStyle);
+				SetWindowLongPtr(hWnd, GWL_STYLE, dwStyle);
 				windowFlags = 3;
 			}
 		}
@@ -160,7 +159,7 @@ BOOL WINAPI H_AdjustWindowRectEx(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD
 		if (dwStyle & WS_POPUP)
 		{
 			dwStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
-			SetWindowLong(hWnd, GWL_STYLE, dwStyle);
+			SetWindowLongPtr(hWnd, GWL_STYLE, dwStyle);
 			windowFlags = 1;
 		}
 	}
@@ -171,7 +170,7 @@ DETOUR_TRAMPOLINE(BOOL WINAPI O_SetWindowPos(HWND hWnd, HWND hWndInsertAfter, in
 BOOL WINAPI H_SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags)
 {
 	// dedicated server is running
-	if ((*(DWORD *)0x487E18))
+	if (*(PDWORD)0x487E18)
 	{
 		return O_SetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
 	}
@@ -184,14 +183,14 @@ BOOL WINAPI H_SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx
 			if (windowFlags & 2)
 			{
 				uFlags &= ~SWP_NOMOVE;
-				if (MonitorFromWindow__)
+				if (PTR_MonitorFromWindow)
 				{
 					HMONITOR hMonitor;
 					MONITORINFO hInfo;
 
-					hMonitor = MonitorFromWindow__(hWnd, MONITOR_DEFAULTTONEAREST);
+					hMonitor = PTR_MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
 					hInfo.cbSize = sizeof(MONITORINFO);
-					GetMonitorInfo__(hMonitor, &hInfo);
+					PTR_GetMonitorInfo(hMonitor, &hInfo);
 
 					X = (int)hInfo.rcMonitor.left;
 					Y = (int)hInfo.rcMonitor.top;
@@ -216,14 +215,14 @@ BOOL WINAPI H_SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx
 	}
 	else if (windowFlags & 2)
 	{
-		if (MonitorFromWindow__)
+		if (PTR_MonitorFromWindow)
 		{
 			HMONITOR hMonitor;
 			MONITORINFO hInfo;
 
-			hMonitor = MonitorFromWindow__(hWnd, MONITOR_DEFAULTTONEAREST);
+			hMonitor = PTR_MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
 			hInfo.cbSize = sizeof(MONITORINFO);
-			GetMonitorInfo__(hMonitor, &hInfo);
+			PTR_GetMonitorInfo(hMonitor, &hInfo);
 
 			X = (int)hInfo.rcMonitor.left;
 			Y = (int)hInfo.rcMonitor.top;
@@ -245,12 +244,12 @@ BOOL WINAPI H_ShowWindow(HWND hWnd, int nCmdShow)
 {
 	BOOL ret = O_ShowWindow(hWnd, nCmdShow);
 	// no dedicated server, please
-	if (!(*(DWORD *)0x487E18) && (windowFlags & 4))
+	if (!(*(PDWORD)0x487E18) && (windowFlags & 4))
 	{
 		if (currentWidth && width >= currentWidth && height >= currentHeight)
 		{
 			HWND hWndInsertAfter = *BorderlessTopmost != '0' ? HWND_TOPMOST : hWnd;
-			SetWindowLong(hWnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+			SetWindowLongPtr(hWnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
 			O_SetWindowPos(hWnd, hWndInsertAfter, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOSIZE);
 		}
 		windowFlags &= ~4;
@@ -259,12 +258,12 @@ BOOL WINAPI H_ShowWindow(HWND hWnd, int nCmdShow)
 }
 
 // just minimizes the borderless window at user discretion
-LRESULT (CALLBACK *O_WindowProc)(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+LRESULT (CALLBACK *O_WindowProc)(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (uMsg == WM_ACTIVATE && !LOWORD(wParam))
 	{
-		if (!(*(DWORD *)0x487A2C && *(BYTE *)((*(DWORD *)0x487A2C) + 0x30) & 2))
+		if (!(*(PDWORD_PTR)0x487A2C && *(PBYTE)((*(PDWORD_PTR)0x487A2C) + 0x30) & 2))
 		{
 			if (windowFlags & 2)
 			{
@@ -279,7 +278,7 @@ LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 DETOUR_TRAMPOLINE(HWND WINAPI O_CreateWindowEx(DWORD dwExStyle, LPCTSTR lpClassName, LPCTSTR lpWindowName, DWORD dwStyle, int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam), CreateWindowEx);
 HWND WINAPI H_CreateWindowEx(DWORD dwExStyle, LPCTSTR lpClassName, LPCTSTR lpWindowName, DWORD dwStyle, int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
 {
-	if ((*(DWORD *)0x487E18) && lpWindowName && !strcmp(lpWindowName, "Riot Engine"))
+	if (*(PDWORD)0x487E18 && lpWindowName && !strcmp(lpWindowName, "Riot Engine"))
 	{
 		dwStyle |= WS_THICKFRAME | WS_MAXIMIZEBOX;
 	}
@@ -311,7 +310,7 @@ void (*O_FixServerAddr)(void);
 void H_FixServerAddr(void)
 {
 	// get the game server address from master
-	__asm mov serveraddr, edx;
+	__asm mov serveraddr, edx
 	// separate IP from port
 	serverport = serveraddr;
 	while (*serverport != ':')
@@ -321,7 +320,7 @@ void H_FixServerAddr(void)
 	// feed the address in format the game likes
 	// I don't know the purpose of middle integer
 	sprintf(addr, "%s %d %s", serveraddr, 0, serverport);
-	__asm lea edx, addr;
+	__asm lea edx, addr
 	O_FixServerAddr();
 }
 
@@ -331,25 +330,25 @@ void H_FixServerAddr(void)
 ****************************************************
 */
 float FOVMultiplier;
-void (*O_SetFOV)(float);
+void (*O_SetFOV)(void);
 // this also multiplies FOV used when zooming in...needs to be fixed
-__declspec(naked) void H_SetFOV(float fov)
+NAKED void H_SetFOV(void)
 {
 	__asm
 	{
-		fld dword ptr ss:[esp + 4h];
-		fmul dword ptr ds:[FOVMultiplier];
-		fstp dword ptr ss:[esp + 4h];
-		jmp dword ptr ds:[O_SetFOV];
+		fld dword ptr ss:[esp + 4h]
+		fmul dword ptr ds:[FOVMultiplier]
+		fstp dword ptr ss:[esp + 4h]
+		jmp dword ptr ds:[O_SetFOV]
 	}
 }
 
 /*
-************************************************************************
-* Dragon.rfl hooks for FOVMultiplier and DisrespectMaxFogDepth options *
-************************************************************************
+********************************************************************
+* Dragon.rfl hooks for FOVMultiplier and IgnoreMaxFogDepth options *
+********************************************************************
 */
-char DisrespectMaxFogDepth[] = "0";
+char IgnoreMaxFogDepth[] = "0";
 const BYTE fogBytes[] = { 0x4C, 0xE4, 0x08, 0xEB, 0x07 };
 DETOUR_TRAMPOLINE(HMODULE WINAPI O_LoadLibrary(LPCTSTR lpFileName), LoadLibrary);
 HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
@@ -357,36 +356,25 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 	HMODULE hDragon = O_LoadLibrary(lpFileName);
 	if (strstr(lpFileName, "Dragon.rfl"))
 	{
-		if (FOVMultiplier && FOVMultiplier > 0.0f)
+		if (FOVMultiplier > 0.0f)
 		{
-			O_SetFOV = (void (*)(float))DetourFunction((PBYTE)((DWORD)hDragon + 0x174490), (PBYTE)H_SetFOV);
+			O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hDragon + 0x174490, (PBYTE)H_SetFOV);
 		}
 
-		if (*DisrespectMaxFogDepth != '0')
+		if (*IgnoreMaxFogDepth != '0')
 		{
 			DWORD dwOldProtect;
-			DWORD dwPatchBase = (DWORD)hDragon + 0x16FD9;
-			VirtualProtect((LPVOID)dwPatchBase, 12, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			DWORD_PTR dwPatchBase = (DWORD_PTR)hDragon + 0x16FD9;
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, PAGE_EXECUTE_READWRITE, &dwOldProtect);
 			memcpy((void *)dwPatchBase, fogBytes, sizeof(fogBytes));
 			memset((void *)(dwPatchBase + sizeof(fogBytes)), 0x90, 7);
-			VirtualProtect((LPVOID)dwPatchBase, 12, dwOldProtect, &dwOldProtect);
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, dwOldProtect, &dwOldProtect);
 		}
 
 		DetourRemove((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
 	}
 	return hDragon;
 }
-
-// proxy stuff
-FARPROC DirectInputCreate;
-__declspec(naked) void _DirectInputCreate() { __asm { jmp [DirectInputCreate] } }
-
-// for certain compatibility issues
-typedef int (WINAPI *SetAppCompatData_)(int index, int data);
-typedef VOID (WINAPI *DisableProcessWindowsGhosting_)(void);
-
-// if we need to explicitly load native ddraw.dll
-typedef HRESULT (WINAPI *DirectDrawCreate_)(GUID FAR *lpGUID, LPDIRECTDRAW FAR *lplpDD, IUnknown FAR *pUnkOuter);
 
 void FPopulateWindowedResolutions(LPDIRECTDRAW lpDD)
 {
@@ -398,10 +386,14 @@ void FPopulateWindowedResolutions(LPDIRECTDRAW lpDD)
 	IDirectDraw_EnumDisplayModes(lpDD, 0, NULL, &DDSurfaceDesc, EnumModesCallback);
 	IDirectDraw_Release(lpDD);
 	qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
-	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD), PAGE_EXECUTE_READWRITE, &dwOldProtect);
-	*(DWORD *)0x43BAFB = (DWORD)&(displaymodes[index].width);
-	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD), dwOldProtect, &dwOldProtect);
+	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+	*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
+	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
 }
+
+// proxy stuff
+FARPROC PTR_DirectInputCreate;
+NAKED void FDirectInputCreate(void) { __asm { jmp [PTR_DirectInputCreate] } }
 
 char SaveWindowedFlag[] = "1";
 char BorderlessWindowHooks[] = "0";
@@ -411,19 +403,19 @@ char UseCustomURL[] = "1";
 char UseCustomFormat[] = "1";
 char szFOVMultiplier[16] = "1.0";
 const BYTE LODbytes1[] = { 0xC7, 0x81, 0x88, 0x06, 0x00, 0x00 };
-const BYTE LODbytes2[] = { 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00 };
+const BYTE LODbytes2[] = { 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24, 0x04, 0x5B, 0xD9, 0x99, 0xC4, 0x06, 0x00, 0x00, 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00 };
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
 	// DLL_PROCESS_ATTACH
 	if (fdwReason)
 	{
 		char szPath[MAX_PATH];
-		HMODULE hDInput;
 		char *temp;
-		char PopulateWindowedResolutions[] = "1";
-		HMODULE hUser32;
+		HMODULE hDInput;
 		HMODULE hDDraw;
-		SetAppCompatData_ SetAppCompatData;
+		int (WINAPI *PTR_SetAppCompatData)(int, int);
+		HRESULT (WINAPI *PTR_DirectDrawCreate)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *);
+		char PopulateWindowedResolutions[] = "1";
 		char szLODFactor[16];
 		float LODFactor;
 
@@ -434,24 +426,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		GetSystemDirectory(szPath, MAX_PATH);
 		strcat(szPath, "\\dinput.dll");
 		hDInput = LoadLibrary(szPath);
-		DirectInputCreate = GetProcAddress(hDInput, "DirectInputCreateA");
+		PTR_DirectInputCreate = GetProcAddress(hDInput, "DirectInputCreateA");
 
 		hDDraw = GetModuleHandle("ddraw.dll");
-		hUser32 = GetModuleHandle("user32.dll");
-
-		SetAppCompatData = (SetAppCompatData_)GetProcAddress(hDDraw, "SetAppCompatData");
+		PTR_SetAppCompatData = (int (WINAPI *)(int, int))GetProcAddress(hDDraw, "SetAppCompatData");
 
 		// we're running on Win7+ through native ddraw.dll
-		if (SetAppCompatData)
+		if (PTR_SetAppCompatData)
 		{
-			DisableProcessWindowsGhosting_ DisableProcessWindowsGhosting;
-
 			// disable maximized windowed mode, only applicable to Win8+, it does nothing on 7
-			SetAppCompatData(12, 0);
-
-			// because game window is considered unresponsive for some reason when it loses focus (5s delay)
-			DisableProcessWindowsGhosting = (DisableProcessWindowsGhosting_)GetProcAddress(hUser32, "DisableProcessWindowsGhosting");
-			DisableProcessWindowsGhosting();
+			PTR_SetAppCompatData(12, 0);
 		}
 
 		// setup path to our config file, act according to config options
@@ -484,14 +468,13 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			else
 			{
 				char szPath[MAX_PATH];
-				DirectDrawCreate_ DirectDrawCreate__;
 
 				GetSystemDirectory(szPath, MAX_PATH);
 				strcat(szPath, "\\ddraw.dll");
 				hDDraw = LoadLibrary(szPath);
-				DirectDrawCreate__ = (DirectDrawCreate_)GetProcAddress(hDDraw, "DirectDrawCreate");
+				PTR_DirectDrawCreate = (HRESULT (WINAPI *)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *))GetProcAddress(hDDraw, "DirectDrawCreate");
 
-				if (!DirectDrawCreate__((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
+				if (!PTR_DirectDrawCreate((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
 				{
 					FPopulateWindowedResolutions(lpDD);
 				}
@@ -506,8 +489,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		if (GetPrivateProfileInt("Window", "BorderlessWindowHooks", 0, szPath))
 		{
-			MonitorFromWindow__ = (MonitorFromWindow_)GetProcAddress(hUser32, "MonitorFromWindow");
-			GetMonitorInfo__ = (GetMonitorInfo_)GetProcAddress(hUser32, "GetMonitorInfoA");
+			HMODULE hUser32 = GetModuleHandle("user32.dll");
+			PTR_MonitorFromWindow = (HMONITOR (WINAPI *)(HWND, DWORD))GetProcAddress(hUser32, "MonitorFromWindow");
+			PTR_GetMonitorInfo = (BOOL (WINAPI *)(HMONITOR, LPMONITORINFO))GetProcAddress(hUser32, "GetMonitorInfoA");
 
 			DetourFunctionWithTrampoline((PBYTE)O_AdjustWindowRectEx, (PBYTE)H_AdjustWindowRectEx);
 			DetourFunctionWithTrampoline((PBYTE)O_SetWindowPos, (PBYTE)H_SetWindowPos);
@@ -561,25 +545,25 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
 		LODFactor = (float)atof(szLODFactor);
 
-		if (LODFactor && LODFactor > 0.0f)
+		if (LODFactor > 0.0f)
 		{
 			DWORD dwOldProtect;
 
-			VirtualProtect((LPVOID)0x43AB63, 16, PAGE_EXECUTE_READWRITE, &dwOldProtect);
-			memcpy((void *)0x43AB63, LODbytes1, sizeof(LODbytes1));
-			memcpy((void *)0x43AB69, &LODFactor, sizeof(LODFactor));
-			memcpy((void *)0x43AB6D, LODbytes2, sizeof(LODbytes2));
-			VirtualProtect((LPVOID)0x43AB63, 16, dwOldProtect, &dwOldProtect);
+			VirtualProtect((LPVOID)0x43AB52, sizeof(LODbytes1) + sizeof(LODFactor) + sizeof(LODbytes2), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			memcpy((void *)0x43AB52, LODbytes1, sizeof(LODbytes1));
+			memcpy((void *)0x43AB58, &LODFactor, sizeof(LODFactor));
+			memcpy((void *)0x43AB5C, LODbytes2, sizeof(LODbytes2));
+			VirtualProtect((LPVOID)0x43AB52, sizeof(LODbytes1) + sizeof(LODFactor) + sizeof(LODbytes2), dwOldProtect, &dwOldProtect);
 		}
 
 		GetPrivateProfileString("Misc", "FOVMultiplier", "1.0", szFOVMultiplier, sizeof(szFOVMultiplier), szPath);
 		FOVMultiplier = (float)atof(szFOVMultiplier);
-		if (GetPrivateProfileInt("Misc", "DisrespectMaxFogDepth", 0, szPath))
+		if (GetPrivateProfileInt("Misc", "IgnoreMaxFogDepth", 0, szPath))
 		{
-			*DisrespectMaxFogDepth = '1';
+			*IgnoreMaxFogDepth = '1';
 		}
 
-		if ((FOVMultiplier && FOVMultiplier > 0.0f) || *DisrespectMaxFogDepth != '0')
+		if ((FOVMultiplier > 0.0f) || *IgnoreMaxFogDepth != '0')
 		{
 			DetourFunctionWithTrampoline((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
 		}
@@ -596,7 +580,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		WritePrivateProfileString("ServerBrowser", "ServerListURL", server, szPath);
 		WritePrivateProfileString("Misc", "LODFactor", szLODFactor, szPath);
 		WritePrivateProfileString("Misc", "FOVMultiplier", szFOVMultiplier, szPath);
-		WritePrivateProfileString("Misc", "DisrespectMaxFogDepth", DisrespectMaxFogDepth, szPath);
+		WritePrivateProfileString("Misc", "IgnoreMaxFogDepth", IgnoreMaxFogDepth, szPath);
 
 		temp = server;
 		// fix slashes
@@ -621,10 +605,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	// clean-up, ensure we can be unloaded even mid-game without crashing
 	else
 	{
-		if (FOVMultiplier && FOVMultiplier > 0.0f)
+		if (FOVMultiplier > 0.0f)
 		{
 			if (GetModuleHandle("Dragon.rfl"))
 			{
+				// this should be done on Dragon.rfl unload on normal exit, hence above call...
 				DetourRemove((PBYTE)O_SetFOV, (PBYTE)H_SetFOV);
 			}
 		}
