@@ -75,7 +75,7 @@ BEGIN
             VALUE "FileDescription", "Drakan Engine Patch Library\0"
             VALUE "FileVersion", "1, 0, 0, 0\0"
             VALUE "InternalName", "Arokh\0"
-            VALUE "LegalCopyright", "Copyright © 2016 UCyborg\0"
+            VALUE "LegalCopyright", "Copyright © 2016 - 2017 UCyborg\0"
             VALUE "LegalTrademarks", "\0"
             VALUE "OriginalFilename", "dinput.dll\0"
             VALUE "PrivateBuild", "\0"

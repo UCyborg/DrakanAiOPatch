@@ -4,8 +4,7 @@
 #include <ddraw.h>
 #include "detours.h"
 
-#pragma comment(lib, "ddraw.lib")
-#pragma comment(lib, "detours.lib")
+#pragma comment(lib, "ddraw")
 
 #define NAKED __declspec(naked)
 
@@ -259,7 +258,7 @@ BOOL WINAPI H_ShowWindow(HWND hWnd, int nCmdShow)
 
 // just minimizes the borderless window at user discretion
 LRESULT (CALLBACK *O_WindowProc)(HWND, UINT, WPARAM, LPARAM);
-LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK H_WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (uMsg == WM_ACTIVATE && !LOWORD(wParam))
 	{
@@ -267,14 +266,14 @@ LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 		{
 			if (windowFlags & 2)
 			{
-				O_ShowWindow(hwnd, SW_MINIMIZE);
+				O_ShowWindow(hWnd, SW_MINIMIZE);
 			}
 		}
 	}
-	return O_WindowProc(hwnd, uMsg, wParam, lParam);
+	return O_WindowProc(hWnd, uMsg, wParam, lParam);
 }
 
-// allow resizing of dedicated serevr window if desired, not that nice without adjusting the actual output resolution
+// allow resizing of dedicated server window if desired, not that nice without adjusting the actual output resolution
 DETOUR_TRAMPOLINE(HWND WINAPI O_CreateWindowEx(DWORD dwExStyle, LPCTSTR lpClassName, LPCTSTR lpWindowName, DWORD dwStyle, int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam), CreateWindowEx);
 HWND WINAPI H_CreateWindowEx(DWORD dwExStyle, LPCTSTR lpClassName, LPCTSTR lpWindowName, DWORD dwStyle, int x, int y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam)
 {
@@ -325,13 +324,74 @@ void H_FixServerAddr(void)
 }
 
 /*
+***********************************************************************
+* Texel alignment                                                     *
+*                                                                     *
+* Adjusts coordinates for text rendering a little to fix distorted    *
+* text when multisample anti-aliasing is used. Effective when         *
+* Fix Texture Coordinates checkbox is checked in Riot Engine Options. *
+***********************************************************************
+*/
+void (*O_TexelAlignment)(void);
+NAKED void H_TexelAlignment(void)
+{
+	__asm
+	{
+loop1:
+		fld dword ptr ds:[eax]
+		fsub st,st(1)
+		add eax, 38h
+		dec ecx
+		fstp dword ptr ds:[eax - 38h]
+		jnz loop1
+
+		lea eax, [esp + 6ch]
+		mov ecx, 4h
+loop2:
+		fld dword ptr ds:[eax]
+		fadd st,st(1)
+		add eax, 38h
+		dec ecx
+		fstp dword ptr ds:[eax - 38h]
+		jnz loop2
+		fstp st
+
+		lea eax, [esp + 50h]
+		fld dword ptr ds:[47951ch]
+		mov ecx, 4h
+loop3:
+		fld dword ptr ds:[eax]
+		fsub st,st(1)
+		add eax, 38h
+		dec ecx
+		fstp dword ptr ds:[eax - 38h]
+		jnz loop3
+
+		lea eax, [esp + 54h]
+		mov ecx, 4h
+loop4:
+		fld dword ptr ds:[eax]
+		fsub st,st(1)
+		add eax, 38h
+		dec ecx
+		fstp dword ptr ds:[eax - 38h]
+		jnz loop4
+		fstp st
+
+		mov eax, 437ba6h
+		jmp eax
+	}
+}
+
+/*
 ****************************************************
 * Hook for our custom function that calculates FOV *
 ****************************************************
 */
 float FOVMultiplier;
 void (*O_SetFOV)(void);
-// this also multiplies FOV used when zooming in...needs to be fixed
+// this also multiplies FOV used when zooming in...
+// maybe add an option to adjust zoom-in FOV separately
 NAKED void H_SetFOV(void)
 {
 	__asm
@@ -348,23 +408,26 @@ NAKED void H_SetFOV(void)
 * Dragon.rfl hooks for FOVMultiplier and IgnoreMaxFogDepth options *
 ********************************************************************
 */
+HMODULE hDragon;
 char IgnoreMaxFogDepth[] = "0";
 const BYTE fogBytes[] = { 0x4C, 0xE4, 0x08, 0xEB, 0x07 };
 DETOUR_TRAMPOLINE(HMODULE WINAPI O_LoadLibrary(LPCTSTR lpFileName), LoadLibrary);
 HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 {
-	HMODULE hDragon = O_LoadLibrary(lpFileName);
+	HMODULE hModule = O_LoadLibrary(lpFileName);
 	if (strstr(lpFileName, "Dragon.rfl"))
 	{
+		hDragon = hModule;
+
 		if (FOVMultiplier > 0.0f)
 		{
-			O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hDragon + 0x174490, (PBYTE)H_SetFOV);
+			O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hModule + 0x174490, (PBYTE)H_SetFOV);
 		}
 
 		if (*IgnoreMaxFogDepth != '0')
 		{
 			DWORD dwOldProtect;
-			DWORD_PTR dwPatchBase = (DWORD_PTR)hDragon + 0x16FD9;
+			DWORD_PTR dwPatchBase = (DWORD_PTR)hModule + 0x16FD9;
 			VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, PAGE_EXECUTE_READWRITE, &dwOldProtect);
 			memcpy((void *)dwPatchBase, fogBytes, sizeof(fogBytes));
 			memset((void *)(dwPatchBase + sizeof(fogBytes)), 0x90, 7);
@@ -373,22 +436,89 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 
 		DetourRemove((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
 	}
-	return hDragon;
+	return hModule;
 }
 
-void FPopulateWindowedResolutions(LPDIRECTDRAW lpDD)
+const BYTE origBytes[] = { 0x08, 0x6A, 0xFF, 0x6A, 0x03, 0x8B, 0x11, 0xFF, 0x52, 0x04, 0x8B, 0x08 };
+DETOUR_TRAMPOLINE(BOOL WINAPI O_FreeLibrary(HMODULE hModule), FreeLibrary);
+BOOL WINAPI H_FreeLibrary(HMODULE hModule)
 {
-	DDSURFACEDESC DDSurfaceDesc;
-	DWORD dwOldProtect;
-	DDSurfaceDesc.dwSize = sizeof(DDSURFACEDESC);
+	if (hModule == hDragon)
+	{
+		if (O_SetFOV)
+		{
+			DetourRemove((PBYTE)O_SetFOV, (PBYTE)H_SetFOV);
+		}
 
-	IDirectDraw_GetDisplayMode(lpDD, &DDSurfaceDesc);
-	IDirectDraw_EnumDisplayModes(lpDD, 0, NULL, &DDSurfaceDesc, EnumModesCallback);
-	IDirectDraw_Release(lpDD);
-	qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
-	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
-	*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
-	VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
+		if (*IgnoreMaxFogDepth != '0')
+		{
+			DWORD dwOldProtect;
+			DWORD_PTR dwPatchBase = (DWORD_PTR)hModule + 0x16FD9;
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			memcpy((void *)dwPatchBase, origBytes, sizeof(origBytes));
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), dwOldProtect, &dwOldProtect);
+		}
+
+		DetourRemove((PBYTE)O_FreeLibrary, (PBYTE)H_FreeLibrary);
+	}
+	return O_FreeLibrary(hModule);
+}
+
+int (CALLBACK *O_WinMain)(HINSTANCE, HINSTANCE, LPSTR, int);
+int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+{
+	char szPath[MAX_PATH];
+	char *temp;
+	HMODULE hDDraw;
+	LPDIRECTDRAW lpDD;
+	int (WINAPI *PTR_SetAppCompatData)(int, int);
+
+	GetModuleFileName(hInstance, szPath, MAX_PATH);
+	GetLongPathName(szPath, szPath, MAX_PATH);
+
+	temp = strrchr(szPath, '\\');
+	temp++;
+
+	if (stricmp(temp, "Drakan.exe"))
+	{
+		if (MessageBox(NULL, "The executable file is not named Drakan.exe. This causes Invalid or corrupted level! error in multiplayer because server and clients must have matching executable file, including its name. Click OK to continue or Cancel to abort.", "Warning", MB_OKCANCEL | MB_ICONWARNING) == IDCANCEL)
+		{
+			return 0;
+		}
+	}
+
+	hDDraw = GetModuleHandle("ddraw.dll");
+	PTR_SetAppCompatData = (int (WINAPI *)(int, int))GetProcAddress(hDDraw, "SetAppCompatData");
+
+	// we're running on Win7+ through native ddraw.dll
+	if (PTR_SetAppCompatData)
+	{
+		// disable maximized windowed mode, only applicable to Win8+, it doesn't do anything on 7
+		PTR_SetAppCompatData(12, 0);
+	}
+
+	if (!DirectDrawCreate(NULL, &lpDD, NULL))
+	{
+		DDSURFACEDESC DDSurfaceDesc;
+		DDSurfaceDesc.dwSize = sizeof(DDSURFACEDESC);
+
+		if (!IDirectDraw_GetDisplayMode(lpDD, &DDSurfaceDesc))
+		{
+			DWORD dwOldProtect;
+
+			IDirectDraw_EnumDisplayModes(lpDD, 0, NULL, &DDSurfaceDesc, EnumModesCallback);
+			qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
+			VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
+			VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
+		}
+
+		IDirectDraw_Release(lpDD);
+	}
+
+	DetourRemove((PBYTE)O_WinMain, (PBYTE)H_WinMain);
+
+	return O_WinMain(hInstance, hPrevInstance, lpCmdLine, nCmdShow);
 }
 
 // proxy stuff
@@ -401,6 +531,7 @@ char MinimizeOnFocusLost[] = "0";
 char ResizableDedicatedServerWindow[] = "1";
 char UseCustomURL[] = "1";
 char UseCustomFormat[] = "1";
+char TexelShiftMode[] = "1";
 char szFOVMultiplier[16] = "1.0";
 const BYTE LODbytes1[] = { 0xC7, 0x81, 0x88, 0x06, 0x00, 0x00 };
 const BYTE LODbytes2[] = { 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24, 0x04, 0x5B, 0xD9, 0x99, 0xC4, 0x06, 0x00, 0x00, 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00 };
@@ -409,34 +540,31 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	// DLL_PROCESS_ATTACH
 	if (fdwReason)
 	{
+		PIMAGE_DOS_HEADER pDosHeader;
+		PIMAGE_NT_HEADERS pNtHeader;
 		char szPath[MAX_PATH];
 		char *temp;
 		HMODULE hDInput;
-		HMODULE hDDraw;
-		int (WINAPI *PTR_SetAppCompatData)(int, int);
-		HRESULT (WINAPI *PTR_DirectDrawCreate)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *);
-		char PopulateWindowedResolutions[] = "1";
 		char szLODFactor[16];
 		float LODFactor;
 
 		// not interested in those
 		DisableThreadLibraryCalls(hinstDLL);
 
+		pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
+		pNtHeader = (PIMAGE_NT_HEADERS)((PBYTE)(PIMAGE_DOS_HEADER)pDosHeader + pDosHeader->e_lfanew);
+
+		if (pNtHeader->FileHeader.TimeDateStamp != 0x38979d2d || pNtHeader->FileHeader.NumberOfSections != 5)
+		{
+			// definitely not the .exe we're designed for
+			return FALSE;
+		}
+
 		// setup proxy stuff
 		GetSystemDirectory(szPath, MAX_PATH);
 		strcat(szPath, "\\dinput.dll");
 		hDInput = LoadLibrary(szPath);
 		PTR_DirectInputCreate = GetProcAddress(hDInput, "DirectInputCreateA");
-
-		hDDraw = GetModuleHandle("ddraw.dll");
-		PTR_SetAppCompatData = (int (WINAPI *)(int, int))GetProcAddress(hDDraw, "SetAppCompatData");
-
-		// we're running on Win7+ through native ddraw.dll
-		if (PTR_SetAppCompatData)
-		{
-			// disable maximized windowed mode, only applicable to Win8+, it does nothing on 7
-			PTR_SetAppCompatData(12, 0);
-		}
 
 		// setup path to our config file, act according to config options
 		GetModuleFileName(NULL, szPath, MAX_PATH);
@@ -445,6 +573,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		*temp = '\0';
 		strcat(szPath, "Arokh.ini");
 
+		O_WinMain = (int (CALLBACK *)(HINSTANCE, HINSTANCE, LPSTR, int))DetourFunction((PBYTE)0x4127F0, (PBYTE)H_WinMain);
+
 		if (GetPrivateProfileInt("Window", "SaveWindowedFlag", 1, szPath))
 		{
 			DetourFunctionWithTrampoline((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
@@ -452,39 +582,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		else
 		{
 			*SaveWindowedFlag = '0';
-		}
-
-		// use DirectDraw interfaces to retrieve display mode list
-		if (GetPrivateProfileInt("Window", "PopulateWindowedResolutions", 1, szPath))
-		{
-			LPDIRECTDRAW lpDD;
-
-			// DDCREATE_EMULATIONONLY because we don't want to invoke graphics driver DLLs from DllMain
-			if (!DirectDrawCreate((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
-			{
-				FPopulateWindowedResolutions(lpDD);
-			}
-			// oops, we're probably running through dgVoodoo, so temporarily load native ddraw.dll
-			else
-			{
-				char szPath[MAX_PATH];
-
-				GetSystemDirectory(szPath, MAX_PATH);
-				strcat(szPath, "\\ddraw.dll");
-				hDDraw = LoadLibrary(szPath);
-				PTR_DirectDrawCreate = (HRESULT (WINAPI *)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *))GetProcAddress(hDDraw, "DirectDrawCreate");
-
-				if (!PTR_DirectDrawCreate((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
-				{
-					FPopulateWindowedResolutions(lpDD);
-				}
-
-				FreeLibrary(hDDraw);
-			}
-		}
-		else
-		{
-			*PopulateWindowedResolutions = '0';
 		}
 
 		if (GetPrivateProfileInt("Window", "BorderlessWindowHooks", 0, szPath))
@@ -542,6 +639,15 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			*UseCustomFormat = '0';
 		}
 
+		if (GetPrivateProfileInt("Misc", "TexelShiftMode", 1, szPath))
+		{
+			O_TexelAlignment = (void (*)(void))DetourFunction((PBYTE)0x437B97, (PBYTE)H_TexelAlignment);
+		}
+		else
+		{
+			*TexelShiftMode = '0';
+		}
+
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
 		LODFactor = (float)atof(szLODFactor);
 
@@ -570,7 +676,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		// ensure all configurable options end up in our config
 		WritePrivateProfileString("Window", "SaveWindowedFlag", SaveWindowedFlag, szPath);
-		WritePrivateProfileString("Window", "PopulateWindowedResolutions", PopulateWindowedResolutions, szPath);
 		WritePrivateProfileString("Window", "BorderlessWindowHooks", BorderlessWindowHooks, szPath);
 		WritePrivateProfileString("Window", "MinimizeOnFocusLost", MinimizeOnFocusLost, szPath);
 		WritePrivateProfileString("Window", "BorderlessTopmost", BorderlessTopmost, szPath);
@@ -581,6 +686,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		WritePrivateProfileString("Misc", "LODFactor", szLODFactor, szPath);
 		WritePrivateProfileString("Misc", "FOVMultiplier", szFOVMultiplier, szPath);
 		WritePrivateProfileString("Misc", "IgnoreMaxFogDepth", IgnoreMaxFogDepth, szPath);
+		WritePrivateProfileString("Misc", "TexelShiftMode", TexelShiftMode, szPath);
 
 		temp = server;
 		// fix slashes
@@ -605,13 +711,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	// clean-up, ensure we can be unloaded even mid-game without crashing
 	else
 	{
-		if (FOVMultiplier > 0.0f)
+		if (*TexelShiftMode != '0')
 		{
-			if (GetModuleHandle("Dragon.rfl"))
-			{
-				// this should be done on Dragon.rfl unload on normal exit, hence above call...
-				DetourRemove((PBYTE)O_SetFOV, (PBYTE)H_SetFOV);
-			}
+			DetourRemove((PBYTE)O_TexelAlignment, (PBYTE)H_TexelAlignment);
 		}
 
 		if (*UseCustomFormat != '0')

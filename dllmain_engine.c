@@ -20,7 +20,7 @@ NAKED void H_getmodelmode(void)
 {
 	__asm
 	{
-		mov modelmode,eax
+		mov dword ptr ds:[modelmode], eax
 		push eax
 	}
 	DetourRemove((PBYTE)O_getmodelmode, (PBYTE)H_getmodelmode);
@@ -121,6 +121,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	// DLL_PROCESS_ATTACH
 	if (fdwReason)
 	{
+		PIMAGE_DOS_HEADER pDosHeader;
+		PIMAGE_NT_HEADERS pNtHeader;
 		char szPath[MAX_PATH];
 		char *temp;
 		HMODULE hDInput;
@@ -130,6 +132,15 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		// not interested in those
 		DisableThreadLibraryCalls(hinstDLL);
+
+		pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
+		pNtHeader = (PIMAGE_NT_HEADERS)((PBYTE)(PIMAGE_DOS_HEADER)pDosHeader + pDosHeader->e_lfanew);
+
+		if (pNtHeader->FileHeader.TimeDateStamp != 0x37fd5107)
+		{
+			// definitely not the .exe we're designed for
+			return FALSE;
+		}
 
 		// setup proxy stuff
 		GetSystemDirectory(szPath, MAX_PATH);
@@ -143,7 +154,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		// we're running on Win7+ through native ddraw.dll
 		if (PTR_SetAppCompatData)
 		{
-			// disable maximized windowed mode, only applicable to Win8+, it does nothing on 7
+			// disable maximized windowed mode, only applicable to Win8+, it doesn't do anything on 7
 			PTR_SetAppCompatData(12, 0);
 		}
 
@@ -159,9 +170,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		{
 			timeout = 1000;
 		}
-		if (timeout > 60000)
+		else if (timeout > 5000)
 		{
-			timeout = 60000;
+			timeout = 5000;
 		}
 
 		// ensure all configurable options end up in our config
