@@ -332,54 +332,47 @@ void H_FixServerAddr(void)
 * Fix Texture Coordinates checkbox is checked in Riot Engine Options. *
 ***********************************************************************
 */
+DWORD_PTR retaddr = 0x437ba6;
 void (*O_TexelAlignment)(void);
 NAKED void H_TexelAlignment(void)
 {
 	__asm
 	{
-loop1:
-		fld dword ptr ds:[eax]
-		fsub st,st(1)
-		add eax, 38h
-		dec ecx
-		fstp dword ptr ds:[eax - 38h]
-		jnz loop1
+		// hack to prevent the map misalignment
+		fld dword ptr ss:[esp + 158h]
+		fcomp dword ptr ds:[4793bch]
+		fstsw ax
+		test ah, 41h
+		jz end
 
-		lea eax, [esp + 6ch]
-		mov ecx, 4h
-loop2:
-		fld dword ptr ds:[eax]
-		fadd st,st(1)
-		add eax, 38h
-		dec ecx
-		fstp dword ptr ds:[eax - 38h]
-		jnz loop2
-		fstp st
-
+		mov eax, dword ptr ds:[ebx + 18h]
+		mov dword ptr ss:[esp + 38h], 0h
+		mov dword ptr ss:[esp + 34h], eax
 		lea eax, [esp + 50h]
+		fild qword ptr ss:[esp + 34h]
+		fdivr dword ptr ds:[47951ch]
 		fld dword ptr ds:[47951ch]
 		mov ecx, 4h
-loop3:
+loopy:
+		// D3DVERTEX.x -= 0.5f;
 		fld dword ptr ds:[eax]
 		fsub st,st(1)
-		add eax, 38h
-		dec ecx
-		fstp dword ptr ds:[eax - 38h]
-		jnz loop3
-
-		lea eax, [esp + 54h]
-		mov ecx, 4h
-loop4:
-		fld dword ptr ds:[eax]
+		fstp dword ptr ds:[eax]
+		// D3DVERTEX.y -= 0.5f;
+		fld dword ptr ds:[eax + 4h]
 		fsub st,st(1)
+		fstp dword ptr ds:[eax + 4h]
+		// D3DVERTEX.tu -= 0.5f / [esp + 34h];
+		fld dword ptr ds:[eax + 18h]
+		fsub st,st(2)
+		fstp dword ptr ds:[eax + 18h]
 		add eax, 38h
 		dec ecx
-		fstp dword ptr ds:[eax - 38h]
-		jnz loop4
+		jnz loopy
 		fstp st
-
-		mov eax, 437ba6h
-		jmp eax
+		fstp st
+end:
+		jmp dword ptr ds:[retaddr]
 	}
 }
 
@@ -419,7 +412,7 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 	{
 		hDragon = hModule;
 
-		if (FOVMultiplier > 0.0f)
+		if (FOVMultiplier > 1.0f)
 		{
 			O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hModule + 0x174490, (PBYTE)H_SetFOV);
 		}
@@ -525,18 +518,21 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 FARPROC PTR_DirectInputCreate;
 NAKED void FDirectInputCreate(void) { __asm { jmp [PTR_DirectInputCreate] } }
 
-char SaveWindowedFlag[] = "1";
 char BorderlessWindowHooks[] = "0";
 char MinimizeOnFocusLost[] = "0";
-char ResizableDedicatedServerWindow[] = "1";
+char ResizableDedicatedServerWindow[] = "0";
 char UseCustomURL[] = "1";
 char UseCustomFormat[] = "1";
 char TexelShiftMode[] = "1";
 char szFOVMultiplier[16] = "1.0";
+float LODFactor;
 const BYTE LODbytes1[] = { 0xC7, 0x81, 0x88, 0x06, 0x00, 0x00 };
 const BYTE LODbytes2[] = { 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24, 0x04, 0x5B, 0xD9, 0x99, 0xC4, 0x06, 0x00, 0x00, 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00 };
+const BYTE origLODbytes[] = { 0x89, 0x99, 0x88, 0x06, 0x00, 0x00, 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24, 0x04, 0x5B, 0xD9, 0x99, 0xC4, 0x06, 0x00, 0x00, 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00, 0x90, 0x90, 0x90, 0x90 };
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
+	DWORD dwOldProtect;
+
 	// DLL_PROCESS_ATTACH
 	if (fdwReason)
 	{
@@ -546,10 +542,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		char *temp;
 		HMODULE hDInput;
 		char szLODFactor[16];
-		float LODFactor;
-
-		// not interested in those
-		DisableThreadLibraryCalls(hinstDLL);
 
 		pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
 		pNtHeader = (PIMAGE_NT_HEADERS)((PBYTE)(PIMAGE_DOS_HEADER)pDosHeader + pDosHeader->e_lfanew);
@@ -559,6 +551,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			// definitely not the .exe we're designed for
 			return FALSE;
 		}
+
+		// not interested in those
+		DisableThreadLibraryCalls(hinstDLL);
 
 		// setup proxy stuff
 		GetSystemDirectory(szPath, MAX_PATH);
@@ -575,14 +570,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		O_WinMain = (int (CALLBACK *)(HINSTANCE, HINSTANCE, LPSTR, int))DetourFunction((PBYTE)0x4127F0, (PBYTE)H_WinMain);
 
-		if (GetPrivateProfileInt("Window", "SaveWindowedFlag", 1, szPath))
-		{
-			DetourFunctionWithTrampoline((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
-		}
-		else
-		{
-			*SaveWindowedFlag = '0';
-		}
+		DetourFunctionWithTrampoline((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
 
 		if (GetPrivateProfileInt("Window", "BorderlessWindowHooks", 0, szPath))
 		{
@@ -603,6 +591,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			{
 				O_WindowProc = (LRESULT (CALLBACK *)(HWND, UINT, WPARAM, LPARAM))DetourFunction((PBYTE)0x412B70, (PBYTE)H_WindowProc);
 			}
+
 			*MinimizeOnFocusLost = '1';
 		}
 
@@ -611,50 +600,51 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			*BorderlessTopmost = '1';
 		}
 
-		if (GetPrivateProfileInt("Window", "ResizableDedicatedServerWindow", 1, szPath))
+		if (GetPrivateProfileInt("Window", "ResizableDedicatedServerWindow", 0, szPath))
 		{
 			DetourFunctionWithTrampoline((PBYTE)O_CreateWindowEx, (PBYTE)H_CreateWindowEx);
-		}
-		else
-		{
-			*ResizableDedicatedServerWindow = '0';
+
+			*ResizableDedicatedServerWindow = '1';
 		}
 
 		if (GetPrivateProfileInt("ServerBrowser", "UseCustomURL", 1, szPath))
 		{
 			O_SetMasterAddr = (void (*)(char *, char *))DetourFunction((PBYTE)0x45F990, (PBYTE)H_SetMasterAddr);
 			GetPrivateProfileString("ServerBrowser", "ServerListURL", server, server, sizeof(server), szPath);
-		}
-		else
-		{
-			*UseCustomURL = '0';
+
+			*UseCustomURL = '1';
 		}
 
 		if (GetPrivateProfileInt("ServerBrowser", "UseCustomFormat", 1, szPath))
 		{
 			O_FixServerAddr = (void (*)(void))DetourFunction((PBYTE)0x45FB50, (PBYTE)H_FixServerAddr);
-		}
-		else
-		{
-			*UseCustomFormat = '0';
+
+			*UseCustomFormat = '1';
 		}
 
 		if (GetPrivateProfileInt("Misc", "TexelShiftMode", 1, szPath))
 		{
-			O_TexelAlignment = (void (*)(void))DetourFunction((PBYTE)0x437B97, (PBYTE)H_TexelAlignment);
-		}
-		else
-		{
-			*TexelShiftMode = '0';
+			O_TexelAlignment = (void (*)(void))DetourFunction((PBYTE)0x437B75, (PBYTE)H_TexelAlignment);
+
+			*TexelShiftMode = '1';
 		}
 
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
 		LODFactor = (float)atof(szLODFactor);
 
+		if (LODFactor < 0.0f)
+		{
+			LODFactor = 0.0f;
+			sprintf(szLODFactor, "%f", LODFactor);
+		}
+		else if (LODFactor > 8.0f)
+		{
+			LODFactor = 8.0f;
+			sprintf(szLODFactor, "%f", LODFactor);
+		}
+
 		if (LODFactor > 0.0f)
 		{
-			DWORD dwOldProtect;
-
 			VirtualProtect((LPVOID)0x43AB52, sizeof(LODbytes1) + sizeof(LODFactor) + sizeof(LODbytes2), PAGE_EXECUTE_READWRITE, &dwOldProtect);
 			memcpy((void *)0x43AB52, LODbytes1, sizeof(LODbytes1));
 			memcpy((void *)0x43AB58, &LODFactor, sizeof(LODFactor));
@@ -662,20 +652,31 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			VirtualProtect((LPVOID)0x43AB52, sizeof(LODbytes1) + sizeof(LODFactor) + sizeof(LODbytes2), dwOldProtect, &dwOldProtect);
 		}
 
-		GetPrivateProfileString("Misc", "FOVMultiplier", "1.0", szFOVMultiplier, sizeof(szFOVMultiplier), szPath);
-		FOVMultiplier = (float)atof(szFOVMultiplier);
 		if (GetPrivateProfileInt("Misc", "IgnoreMaxFogDepth", 0, szPath))
 		{
 			*IgnoreMaxFogDepth = '1';
 		}
 
-		if ((FOVMultiplier > 0.0f) || *IgnoreMaxFogDepth != '0')
+		GetPrivateProfileString("Misc", "FOVMultiplier", "1.0", szFOVMultiplier, sizeof(szFOVMultiplier), szPath);
+		FOVMultiplier = (float)atof(szFOVMultiplier);
+
+		if (FOVMultiplier < 1.0f)
+		{
+			FOVMultiplier = 1.0f;
+			sprintf(szFOVMultiplier, "%f", FOVMultiplier);
+		}
+		else if (FOVMultiplier > 1.875f)
+		{
+			FOVMultiplier = 1.875f;
+			sprintf(szFOVMultiplier, "%f", FOVMultiplier);
+		}
+
+		if (FOVMultiplier > 1.0f || *IgnoreMaxFogDepth != '0')
 		{
 			DetourFunctionWithTrampoline((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
 		}
 
 		// ensure all configurable options end up in our config
-		WritePrivateProfileString("Window", "SaveWindowedFlag", SaveWindowedFlag, szPath);
 		WritePrivateProfileString("Window", "BorderlessWindowHooks", BorderlessWindowHooks, szPath);
 		WritePrivateProfileString("Window", "MinimizeOnFocusLost", MinimizeOnFocusLost, szPath);
 		WritePrivateProfileString("Window", "BorderlessTopmost", BorderlessTopmost, szPath);
@@ -711,6 +712,13 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 	// clean-up, ensure we can be unloaded even mid-game without crashing
 	else
 	{
+		if (LODFactor > 0.0f)
+		{
+			VirtualProtect((LPVOID)0x43AB52, sizeof(origLODbytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			memcpy((void *)0x43AB52, origLODbytes, sizeof(origLODbytes));
+			VirtualProtect((LPVOID)0x43AB52, sizeof(origLODbytes), dwOldProtect, &dwOldProtect);
+		}
+
 		if (*TexelShiftMode != '0')
 		{
 			DetourRemove((PBYTE)O_TexelAlignment, (PBYTE)H_TexelAlignment);
@@ -743,10 +751,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			}
 		}
 
-		if (*SaveWindowedFlag != '0')
-		{
-			DetourRemove((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
-		}
+		DetourRemove((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
 	}
 	return TRUE;
 }
