@@ -30,7 +30,7 @@ typedef struct displaymode_s
 } displaymode_t;
 
 // this array is used for display modes in windowed mode
-displaymode_t *displaymodes = (displaymode_t *)0x48F000;
+displaymode_t *displaymodes = (displaymode_t *)0x48C000;
 int index;
 int currentWidth;
 int currentHeight;
@@ -490,7 +490,8 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 		PTR_SetAppCompatData(12, 0);
 	}
 
-	if (!DirectDrawCreate(NULL, &lpDD, NULL))
+	// no need to invoke graphics driver just to get resolutions
+	if (!DirectDrawCreate((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
 	{
 		DDSURFACEDESC DDSurfaceDesc;
 		DDSurfaceDesc.dwSize = sizeof(DDSURFACEDESC);
