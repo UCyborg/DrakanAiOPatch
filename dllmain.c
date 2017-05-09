@@ -376,6 +376,33 @@ end:
 	}
 }
 
+DWORD refreshRate;
+void (*O_SetDisplayMode)(void);
+NAKED void H_SetDisplayMode(void)
+{
+	__asm
+	{
+		push ecx
+		push esi
+		push dword ptr ds:[refreshRate]
+		push dword ptr ss:[esp + 18h]
+		push dword ptr ss:[esp + 18h]
+		push dword ptr ss:[esp + 18h]
+		call dword ptr ds:[O_SetDisplayMode]
+		pop ecx
+		test eax,eax
+		jz end
+		push esi
+		push esi
+		push dword ptr ss:[esp + 14h]
+		push dword ptr ss:[esp + 14h]
+		push dword ptr ss:[esp + 14h]
+		call dword ptr ds:[O_SetDisplayMode]
+end:
+		retn 14h
+	}
+}
+
 /*
 ****************************************************
 * Hook for our custom function that calculates FOV *
@@ -498,13 +525,17 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 
 		if (!IDirectDraw_GetDisplayMode(lpDD, &DDSurfaceDesc))
 		{
-			DWORD dwOldProtect;
-
 			IDirectDraw_EnumDisplayModes(lpDD, 0, NULL, &DDSurfaceDesc, EnumModesCallback);
-			qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
-			VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
-			*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
-			VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
+
+			if (index)
+			{
+				DWORD dwOldProtect;
+
+				qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
+				VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+				*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
+				VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
+			}
 		}
 
 		IDirectDraw_Release(lpDD);
@@ -525,6 +556,7 @@ char ResizableDedicatedServerWindow[] = "0";
 char UseCustomURL[] = "1";
 char UseCustomFormat[] = "1";
 char TexelShiftMode[] = "1";
+char RefreshRate[4] = "0";
 char szFOVMultiplier[16] = "1.0";
 float LODFactor;
 const BYTE LODbytes1[] = { 0xC7, 0x81, 0x88, 0x06, 0x00, 0x00 };
@@ -630,6 +662,18 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			*TexelShiftMode = '1';
 		}
 
+		if (refreshRate = (DWORD)GetPrivateProfileInt("Misc", "RefreshRate", 0, szPath))
+		{
+			if (refreshRate > 240)
+			{
+				refreshRate = 240;
+			}
+
+			O_SetDisplayMode = (void (*)(void))DetourFunction((PBYTE)0x439330, (PBYTE)H_SetDisplayMode);
+
+			itoa((int)refreshRate, RefreshRate, 10);
+		}
+
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
 		LODFactor = (float)atof(szLODFactor);
 
@@ -689,6 +733,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		WritePrivateProfileString("Misc", "FOVMultiplier", szFOVMultiplier, szPath);
 		WritePrivateProfileString("Misc", "IgnoreMaxFogDepth", IgnoreMaxFogDepth, szPath);
 		WritePrivateProfileString("Misc", "TexelShiftMode", TexelShiftMode, szPath);
+		WritePrivateProfileString("Misc", "RefreshRate", RefreshRate, szPath);
 
 		temp = server;
 		// fix slashes
@@ -718,6 +763,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			VirtualProtect((LPVOID)0x43AB52, sizeof(origLODbytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
 			memcpy((void *)0x43AB52, origLODbytes, sizeof(origLODbytes));
 			VirtualProtect((LPVOID)0x43AB52, sizeof(origLODbytes), dwOldProtect, &dwOldProtect);
+		}
+
+		if (*RefreshRate != '0')
+		{
+			DetourRemove((PBYTE)O_SetDisplayMode, (PBYTE)H_SetDisplayMode);
 		}
 
 		if (*TexelShiftMode != '0')
