@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <stdio.h>
+#include <string.h>
 #include <Windows.h>
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
@@ -23,8 +24,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	do
 	{
-		if (!CreateProcess("Drakan.exe", szCmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &sinfo, &pinfo))
-			return 0;
+		if (GetAsyncKeyState(VK_CONTROL) & 0x8000 || !CreateProcess("Drakan.exe", szCmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &sinfo, &pinfo))
+			break;
 
 		WaitForSingleObject(pinfo.hProcess, INFINITE);
 		GetExitCodeProcess(pinfo.hProcess, &exitcode);

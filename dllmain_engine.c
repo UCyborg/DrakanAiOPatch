@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <stdlib.h>
+#include <string.h>
 #include <Windows.h>
 #include "detours.h"
 
@@ -13,7 +14,7 @@ BOOL modelmode;
 BOOL modelstate;
 BOOL modelstate2;
 DWORD stomptime;
-int timeout;
+UINT timeout;
 
 void (*O_getmodelmode)(void);
 NAKED void H_getmodelmode(void)
@@ -36,7 +37,7 @@ BOOL WINAPI H_PeekMessage(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgF
 {
 	if (!modelmode)
 	{
-		if (!space && ((GetTickCount() - stomptime) > (DWORD)timeout))
+		if (!space && ((GetTickCount() - stomptime) > timeout))
 		{
 			// sit tight in here until something interesting happens
 			return GetMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
@@ -134,7 +135,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		DisableThreadLibraryCalls(hinstDLL);
 
 		pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
-		pNtHeader = (PIMAGE_NT_HEADERS)((PBYTE)(PIMAGE_DOS_HEADER)pDosHeader + pDosHeader->e_lfanew);
+		pNtHeader = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + pDosHeader->e_lfanew);
 
 		if (pNtHeader->FileHeader.TimeDateStamp != 0x37fd5107)
 		{
@@ -160,8 +161,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		// setup path to our config file, act according to config options
 		GetModuleFileName(NULL, szPath, MAX_PATH);
-		temp = strrchr(szPath, '\\');
-		temp++;
+		temp = strrchr(szPath, '\\') + 1;
 		*temp = '\0';
 		strcat(szPath, "Arokh.ini");
 

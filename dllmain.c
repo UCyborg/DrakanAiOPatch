@@ -1,5 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <Windows.h>
 #include <ddraw.h>
 #include "detours.h"
@@ -31,9 +33,7 @@ typedef struct displaymode_s
 
 // this array is used for display modes in windowed mode
 displaymode_t *displaymodes = (displaymode_t *)0x48C000;
-int index;
-int currentWidth;
-int currentHeight;
+size_t index;
 HRESULT WINAPI EnumModesCallback(LPDDSURFACEDESC lpDDSurfaceDesc, LPVOID lpContext)
 {
 	// we're only interested in modes matching our desktop bit depth
@@ -79,6 +79,8 @@ BOOL (WINAPI *PTR_GetMonitorInfo)(HMONITOR, LPMONITORINFO);
 *****************************************************************
 */
 DWORD windowFlags = 4;
+int currentWidth;
+int currentHeight;
 int width;
 int height;
 char BorderlessTopmost[] = "0";
@@ -289,8 +291,8 @@ HWND WINAPI H_CreateWindowEx(DWORD dwExStyle, LPCTSTR lpClassName, LPCTSTR lpWin
 * Simple solution to give us working server browser *
 *****************************************************
 */
-char server[256] = "www.qtracker.com/server_list_details.php?game=drakan";
-char path[256];
+char server[128];
+char *path;
 // master server address and location of server list are separate arguments,
 // splitting code is in DllMain
 void (*O_SetMasterAddr)(char *, char *);
@@ -302,7 +304,7 @@ void H_SetMasterAddr(char *oserver, char *opath)
 }
 
 // game server address retrieved from master
-char addr[256];
+char addr[32];
 char *serveraddr;
 char *serverport;
 void (*O_FixServerAddr)(void);
@@ -318,7 +320,7 @@ void H_FixServerAddr(void)
 	serverport++;
 	// feed the address in format the game likes
 	// I don't know the purpose of middle integer
-	sprintf(addr, "%s %d %s", serveraddr, 0, serverport);
+	sprintf(addr, "%s 0 %s", serveraddr, serverport);
 	__asm lea edx, addr
 	O_FixServerAddr();
 }
@@ -362,6 +364,7 @@ loopy:
 		fld dword ptr ds:[eax + 4h]
 		fsub st,st(1)
 		fstp dword ptr ds:[eax + 4h]
+		// ???
 		// D3DVERTEX.tu -= 0.5f / [esp + 34h];
 		fld dword ptr ds:[eax + 18h]
 		fsub st,st(2)
@@ -376,6 +379,11 @@ end:
 	}
 }
 
+/*
+**********************************************************************
+* Calls DirectDraw SetDisplayMode method with specified refresh rate *
+**********************************************************************
+*/
 DWORD refreshRate;
 void (*O_SetDisplayMode)(void);
 NAKED void H_SetDisplayMode(void)
@@ -392,6 +400,7 @@ NAKED void H_SetDisplayMode(void)
 		pop ecx
 		test eax,eax
 		jz end
+		// failed, let system pick whatever works
 		push esi
 		push esi
 		push dword ptr ss:[esp + 14h]
@@ -424,64 +433,183 @@ NAKED void H_SetFOV(void)
 }
 
 /*
+*****************
+* 445 SP1 Patch *
+*****************
+*/
+const BYTE LeftForwardCamOrig[] = { 0xC7, 0x44, 0x24, 0x1C, 0xCB, 0xE9, 0xAC, 0xBF, 0x89, 0x44, 0x24, 0x10 };
+const BYTE LeftForwardCamPatch[] = { 0x89, 0x44, 0x24, 0x10, 0xE9, 0x03, 0x04, 0x00, 0x00, 0x90, 0x90, 0x90 };
+
+const BYTE ForwardBackCamOrig[] = { 0xC7, 0x44, 0x24, 0x1C, 0xDA, 0x0F, 0x49, 0xC0, 0x89, 0x44, 0x24, 0x10 };
+const BYTE ForwardBackCamPatch[] = { 0x89, 0x44, 0x24, 0x10, 0xE9, 0x41, 0x03, 0x00, 0x00, 0x90, 0x90, 0x90 };
+
+const BYTE AttackIntervalOrig[] = { 0x68, 0x33, 0x33, 0x33, 0x3F };
+// just a jump, the rest is in Dragon.rfl
+const BYTE AttackIntervalPatch[] = { 0xE9, 0x0A, 0x84, 0x10, 0x00 };
+
+HMODULE hDragon;
+DWORD dwOldProtect;
+BOOL Apply445SP1(BOOL patch)
+{
+	if (patch)
+	{
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60E1B), sizeof(LeftForwardCamPatch), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x60E1B), LeftForwardCamPatch, sizeof(LeftForwardCamPatch));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60E1B), sizeof(LeftForwardCamPatch), dwOldProtect, &dwOldProtect);
+
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60EDD), sizeof(ForwardBackCamPatch), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x60EDD), ForwardBackCamPatch, sizeof(ForwardBackCamPatch));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60EDD), sizeof(ForwardBackCamPatch), dwOldProtect, &dwOldProtect);
+
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x6C161), sizeof(AttackIntervalPatch), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x6C161), AttackIntervalPatch, sizeof(AttackIntervalPatch));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x6C161), sizeof(AttackIntervalPatch), dwOldProtect, &dwOldProtect);
+	}
+	else
+	{
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60E1B), sizeof(LeftForwardCamOrig), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x60E1B), LeftForwardCamOrig, sizeof(LeftForwardCamOrig));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60E1B), sizeof(LeftForwardCamOrig), dwOldProtect, &dwOldProtect);
+
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60EDD), sizeof(ForwardBackCamOrig), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x60EDD), ForwardBackCamOrig, sizeof(ForwardBackCamOrig));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x60EDD), sizeof(ForwardBackCamOrig), dwOldProtect, &dwOldProtect);
+
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x6C161), sizeof(AttackIntervalOrig), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)((DWORD_PTR)hDragon + 0x6C161), AttackIntervalOrig, sizeof(AttackIntervalOrig));
+		VirtualProtect((LPVOID)((DWORD_PTR)hDragon + 0x6C161), sizeof(AttackIntervalOrig), dwOldProtect, &dwOldProtect);
+	}
+	return patch;
+}
+
+char **levelFileIndex;
+size_t SP1LevelCount;
+BOOL patched;
+void (*O_LevelFileHook)(void);
+void H_LevelFileHook(void)
+{
+	char *szLevelName;
+	BOOL match;
+	size_t i;
+
+	__asm mov szLevelName, ebx
+
+	szLevelName = strrchr(szLevelName, '\\') + 1;
+	match = FALSE;
+
+	for (i = 0; i < SP1LevelCount; i++)
+	{
+		if (levelFileIndex[i] && !stricmp(szLevelName, levelFileIndex[i]))
+		{
+			match = TRUE;
+			break;
+		}
+	}
+
+	if (match)
+	{
+		if (!patched)
+		{
+			patched = Apply445SP1(TRUE);
+		}
+	}
+	else
+	{
+		if (patched)
+		{
+			patched = Apply445SP1(FALSE);
+		}
+	}
+
+	O_LevelFileHook();
+}
+
+/*
 ********************************************************************
 * Dragon.rfl hooks for FOVMultiplier and IgnoreMaxFogDepth options *
 ********************************************************************
 */
-HMODULE hDragon;
 char IgnoreMaxFogDepth[] = "0";
-const BYTE fogBytes[] = { 0x4C, 0xE4, 0x08, 0xEB, 0x07 };
-DETOUR_TRAMPOLINE(HMODULE WINAPI O_LoadLibrary(LPCTSTR lpFileName), LoadLibrary);
-HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
+const BYTE origBytes[] = { 0x08, 0x6A, 0xFF, 0x6A, 0x03, 0x8B, 0x11, 0xFF, 0x52, 0x04, 0x8B, 0x08 };
+void RemoveStaticRFLHooks(void)
 {
-	HMODULE hModule = O_LoadLibrary(lpFileName);
-	if (strstr(lpFileName, "Dragon.rfl"))
+	if (*IgnoreMaxFogDepth != '0')
 	{
-		hDragon = hModule;
-
-		if (FOVMultiplier > 1.0f)
-		{
-			O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hModule + 0x174490, (PBYTE)H_SetFOV);
-		}
-
-		if (*IgnoreMaxFogDepth != '0')
-		{
-			DWORD dwOldProtect;
-			DWORD_PTR dwPatchBase = (DWORD_PTR)hModule + 0x16FD9;
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, PAGE_EXECUTE_READWRITE, &dwOldProtect);
-			memcpy((void *)dwPatchBase, fogBytes, sizeof(fogBytes));
-			memset((void *)(dwPatchBase + sizeof(fogBytes)), 0x90, 7);
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, dwOldProtect, &dwOldProtect);
-		}
-
-		DetourRemove((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
+		DWORD_PTR dwPatchBase = (DWORD_PTR)hDragon + 0x16FD9;
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)dwPatchBase, origBytes, sizeof(origBytes));
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), dwOldProtect, &dwOldProtect);
 	}
-	return hModule;
+
+	if (O_SetFOV)
+	{
+		DetourRemove((PBYTE)O_SetFOV, (PBYTE)H_SetFOV);
+	}
 }
 
-const BYTE origBytes[] = { 0x08, 0x6A, 0xFF, 0x6A, 0x03, 0x8B, 0x11, 0xFF, 0x52, 0x04, 0x8B, 0x08 };
 DETOUR_TRAMPOLINE(BOOL WINAPI O_FreeLibrary(HMODULE hModule), FreeLibrary);
 BOOL WINAPI H_FreeLibrary(HMODULE hModule)
 {
 	if (hModule == hDragon)
 	{
-		if (O_SetFOV)
+		if (O_LevelFileHook)
 		{
-			DetourRemove((PBYTE)O_SetFOV, (PBYTE)H_SetFOV);
+			DetourRemove((PBYTE)O_LevelFileHook, (PBYTE)H_LevelFileHook);
+			if (patched)
+			{
+				Apply445SP1(FALSE);
+			}
 		}
 
-		if (*IgnoreMaxFogDepth != '0')
-		{
-			DWORD dwOldProtect;
-			DWORD_PTR dwPatchBase = (DWORD_PTR)hModule + 0x16FD9;
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
-			memcpy((void *)dwPatchBase, origBytes, sizeof(origBytes));
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(origBytes), dwOldProtect, &dwOldProtect);
-		}
-
+		RemoveStaticRFLHooks();
+		hDragon = NULL;
 		DetourRemove((PBYTE)O_FreeLibrary, (PBYTE)H_FreeLibrary);
 	}
 	return O_FreeLibrary(hModule);
+}
+
+const BYTE fogBytes[] = { 0x4C, 0xE4, 0x08, 0xEB, 0x07 };
+void InstallStaticRFLHooks(void)
+{
+	if (FOVMultiplier > 1.0f)
+	{
+		O_SetFOV = (void (*)(void))DetourFunction((PBYTE)(DWORD_PTR)hDragon + 0x174490, (PBYTE)H_SetFOV);
+	}
+
+	if (*IgnoreMaxFogDepth != '0')
+	{
+		DWORD_PTR dwPatchBase = (DWORD_PTR)hDragon + 0x16FD9;
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, PAGE_EXECUTE_READWRITE, &dwOldProtect);
+		memcpy((void *)dwPatchBase, fogBytes, sizeof(fogBytes));
+		memset((void *)(dwPatchBase + sizeof(fogBytes)), 0x90, 7);
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(fogBytes) + 7, dwOldProtect, &dwOldProtect);
+	}
+}
+
+DETOUR_TRAMPOLINE(HMODULE WINAPI O_LoadLibrary(LPCTSTR lpFileName), LoadLibrary);
+HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
+{
+	HMODULE hModule = O_LoadLibrary(lpFileName);
+	if (hModule)
+	{
+		size_t len = strlen(lpFileName);
+		if (len >= 10 && !stricmp(&lpFileName[len - 10], "Dragon.rfl"))
+		{
+			PIMAGE_NT_HEADERS pNtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)hModule + ((PIMAGE_DOS_HEADER)hModule)->e_lfanew);
+
+			if (pNtHeaders->FileHeader.TimeDateStamp != 0x389F846E || pNtHeaders->FileHeader.NumberOfSections != 6)
+			{
+				// wrong RFL
+				O_FreeLibrary(hModule);
+				return NULL;
+			}
+
+			hDragon = hModule;
+			InstallStaticRFLHooks();
+			DetourRemove((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
+		}
+	}
+	return hModule;
 }
 
 int (CALLBACK *O_WinMain)(HINSTANCE, HINSTANCE, LPSTR, int);
@@ -496,12 +624,11 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 	GetModuleFileName(hInstance, szPath, MAX_PATH);
 	GetLongPathName(szPath, szPath, MAX_PATH);
 
-	temp = strrchr(szPath, '\\');
-	temp++;
+	temp = strrchr(szPath, '\\') + 1;
 
 	if (stricmp(temp, "Drakan.exe"))
 	{
-		if (MessageBox(NULL, "The executable file is not named Drakan.exe. This causes Invalid or corrupted level! error in multiplayer because server and clients must have matching executable file, including its name. Click OK to continue or Cancel to abort.", "Warning", MB_OKCANCEL | MB_ICONWARNING) == IDCANCEL)
+		if (MessageBox(NULL, "The executable file is not named Drakan.exe. This causes Invalid or corrupted level! error in multiplayer because server and clients must have matching executable file, including its name. Click OK to continue or Cancel to quit.", "Warning", MB_OKCANCEL | MB_ICONWARNING) == IDCANCEL)
 		{
 			return 0;
 		}
@@ -517,7 +644,7 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 		PTR_SetAppCompatData(12, 0);
 	}
 
-	// no need to invoke graphics driver just to get resolutions
+	// no need to invoke graphics driver just to get resolutions, though it only works with native DirectDraw
 	if (!DirectDrawCreate((GUID *)DDCREATE_EMULATIONONLY, &lpDD, NULL))
 	{
 		DDSURFACEDESC DDSurfaceDesc;
@@ -529,8 +656,6 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 
 			if (index)
 			{
-				DWORD dwOldProtect;
-
 				qsort(displaymodes, index, sizeof(displaymode_t), CompareDisplayModes);
 				VirtualProtect((LPVOID)0x43BAFB, sizeof(DWORD_PTR), PAGE_EXECUTE_READWRITE, &dwOldProtect);
 				*(PDWORD_PTR)0x43BAFB = (DWORD_PTR)&(displaymodes[index].width);
@@ -540,8 +665,6 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 
 		IDirectDraw_Release(lpDD);
 	}
-
-	DetourRemove((PBYTE)O_WinMain, (PBYTE)H_WinMain);
 
 	return O_WinMain(hInstance, hPrevInstance, lpCmdLine, nCmdShow);
 }
@@ -564,22 +687,23 @@ const BYTE LODbytes2[] = { 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24,
 const BYTE origLODbytes[] = { 0x89, 0x99, 0x88, 0x06, 0x00, 0x00, 0xD9, 0x99, 0xBC, 0x06, 0x00, 0x00, 0xDF, 0x6C, 0x24, 0x04, 0x5B, 0xD9, 0x99, 0xC4, 0x06, 0x00, 0x00, 0x83, 0xC4, 0x08, 0xC2, 0x10, 0x00, 0x90, 0x90, 0x90, 0x90 };
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-	DWORD dwOldProtect;
+	size_t levelFileCount;
 
 	// DLL_PROCESS_ATTACH
 	if (fdwReason)
 	{
 		PIMAGE_DOS_HEADER pDosHeader;
-		PIMAGE_NT_HEADERS pNtHeader;
+		PIMAGE_NT_HEADERS pNtHeaders;
 		char szPath[MAX_PATH];
-		char *temp;
 		HMODULE hDInput;
+		char *temp;
+		size_t serverURLlength;
 		char szLODFactor[16];
 
 		pDosHeader = (PIMAGE_DOS_HEADER)GetModuleHandle(NULL);
-		pNtHeader = (PIMAGE_NT_HEADERS)((PBYTE)(PIMAGE_DOS_HEADER)pDosHeader + pDosHeader->e_lfanew);
+		pNtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)pDosHeader + pDosHeader->e_lfanew);
 
-		if (pNtHeader->FileHeader.TimeDateStamp != 0x38979d2d || pNtHeader->FileHeader.NumberOfSections != 5)
+		if (pNtHeaders->FileHeader.TimeDateStamp != 0x38979d2d || pNtHeaders->FileHeader.NumberOfSections != 5)
 		{
 			// definitely not the .exe we're designed for
 			return FALSE;
@@ -591,13 +715,20 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		// setup proxy stuff
 		GetSystemDirectory(szPath, MAX_PATH);
 		strcat(szPath, "\\dinput.dll");
-		hDInput = LoadLibrary(szPath);
+		// support for being loaded again after forceful unload by external means (more for testing and being cool)
+		if (hDInput = GetModuleHandle(szPath))
+		{
+			hDragon = GetModuleHandle("Dragon.rfl");
+		}
+		else
+		{
+			hDInput = LoadLibrary(szPath);
+		}
 		PTR_DirectInputCreate = GetProcAddress(hDInput, "DirectInputCreateA");
 
 		// setup path to our config file, act according to config options
 		GetModuleFileName(NULL, szPath, MAX_PATH);
-		temp = strrchr(szPath, '\\');
-		temp++;
+		temp = strrchr(szPath, '\\') + 1;
 		*temp = '\0';
 		strcat(szPath, "Arokh.ini");
 
@@ -642,8 +773,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		if (GetPrivateProfileInt("ServerBrowser", "UseCustomURL", 1, szPath))
 		{
+			// we need 1 byte of extra space to be able to split string
+			serverURLlength = GetPrivateProfileString("ServerBrowser", "ServerListURL", "www.qtracker.com/server_list_details.php?game=drakan", server, sizeof(server) - 1, szPath);
 			O_SetMasterAddr = (void (*)(char *, char *))DetourFunction((PBYTE)0x45F990, (PBYTE)H_SetMasterAddr);
-			GetPrivateProfileString("ServerBrowser", "ServerListURL", server, server, sizeof(server), szPath);
 
 			*UseCustomURL = '1';
 		}
@@ -662,16 +794,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			*TexelShiftMode = '1';
 		}
 
-		if (refreshRate = (DWORD)GetPrivateProfileInt("Misc", "RefreshRate", 0, szPath))
+		if (refreshRate = GetPrivateProfileInt("Misc", "RefreshRate", 0, szPath))
 		{
-			if (refreshRate > 240)
-			{
-				refreshRate = 240;
-			}
-
 			O_SetDisplayMode = (void (*)(void))DetourFunction((PBYTE)0x439330, (PBYTE)H_SetDisplayMode);
 
-			itoa((int)refreshRate, RefreshRate, 10);
+			itoa(refreshRate, RefreshRate, 10);
 		}
 
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
@@ -716,9 +843,52 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			sprintf(szFOVMultiplier, "%f", FOVMultiplier);
 		}
 
-		if (FOVMultiplier > 1.0f || *IgnoreMaxFogDepth != '0')
+		if (FOVMultiplier > 1.0f || *IgnoreMaxFogDepth != '0' || SP1LevelCount)
 		{
 			DetourFunctionWithTrampoline((PBYTE)O_LoadLibrary, (PBYTE)H_LoadLibrary);
+			DetourFunctionWithTrampoline((PBYTE)O_FreeLibrary, (PBYTE)H_FreeLibrary);
+		}
+
+		// read in list of levels for which we should apply 445SP1 patch
+		if (levelFileCount = GetPrivateProfileInt("445SP1", "FileCount", 0, szPath))
+		{
+			if (levelFileIndex = malloc(sizeof(*levelFileIndex) * levelFileCount))
+			{
+				char szLevelName[64];
+				size_t allocSize;
+
+				for (; levelFileCount; SP1LevelCount++, levelFileCount--)
+				{
+					sprintf(szLevelName, "Level%u", SP1LevelCount + 1);
+					if (allocSize = GetPrivateProfileString("445SP1", szLevelName, NULL, szLevelName, sizeof(szLevelName), szPath))
+					{
+						if (levelFileIndex[SP1LevelCount] = malloc(allocSize + 1))
+						{
+							strcpy(levelFileIndex[SP1LevelCount], szLevelName);
+						}
+						else
+						{
+							// something's really wrong if this happens
+							return FALSE;
+						}
+					}
+					else
+					{
+						levelFileIndex[SP1LevelCount] = NULL;
+					}
+				}
+
+				O_LevelFileHook = (void (*)(void))DetourFunction((PBYTE)0x438117, (PBYTE)H_LevelFileHook);
+			}
+			else
+			{
+				return FALSE;
+			}
+		}
+
+		if (hDragon)
+		{
+			InstallStaticRFLHooks();
 		}
 
 		// ensure all configurable options end up in our config
@@ -726,38 +896,73 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		WritePrivateProfileString("Window", "MinimizeOnFocusLost", MinimizeOnFocusLost, szPath);
 		WritePrivateProfileString("Window", "BorderlessTopmost", BorderlessTopmost, szPath);
 		WritePrivateProfileString("Window", "ResizableDedicatedServerWindow", ResizableDedicatedServerWindow, szPath);
+
 		WritePrivateProfileString("ServerBrowser", "UseCustomURL", UseCustomURL, szPath);
 		WritePrivateProfileString("ServerBrowser", "UseCustomFormat", UseCustomFormat, szPath);
 		WritePrivateProfileString("ServerBrowser", "ServerListURL", server, szPath);
+
 		WritePrivateProfileString("Misc", "LODFactor", szLODFactor, szPath);
 		WritePrivateProfileString("Misc", "FOVMultiplier", szFOVMultiplier, szPath);
 		WritePrivateProfileString("Misc", "IgnoreMaxFogDepth", IgnoreMaxFogDepth, szPath);
 		WritePrivateProfileString("Misc", "TexelShiftMode", TexelShiftMode, szPath);
 		WritePrivateProfileString("Misc", "RefreshRate", RefreshRate, szPath);
 
-		temp = server;
-		// fix slashes
-		while (*temp)
+		if (*UseCustomURL == '1')
 		{
-			if (*temp == '\\')
+			temp = server;
+			// fix slashes
+			while (*temp)
 			{
-				*temp = '/';
+				if (*temp == '\\')
+				{
+					*temp = '/';
+				}
+				temp++;
 			}
-			temp++;
-		}
 
-		// separate master server address from location of server list
-		if (temp = strchr(server, '/'))
-		{
-			*temp = '\0';
-			temp++;
-			sprintf(path, "/%s", temp);
+			// separate master server address from location of server list
+			if (temp = strchr(server, '/'))
+			{
+				memmove(path = temp + 1, temp, strlen(temp) + 1);
+				*temp = '\0';
+			}
+			else
+			{
+				path = &server[serverURLlength];
+				*++path = '/';
+			}
 		}
 	}
 	// DLL_PROCESS_DETACH
 	// clean-up, ensure we can be unloaded even mid-game without crashing
 	else
 	{
+		if (hDragon)
+		{
+			if (O_LevelFileHook)
+			{
+				DetourRemove((PBYTE)O_LevelFileHook, (PBYTE)H_LevelFileHook);
+
+				if (patched)
+				{
+					Apply445SP1(FALSE);
+				}
+			}
+
+			RemoveStaticRFLHooks();
+			DetourRemove((PBYTE)O_FreeLibrary, (PBYTE)H_FreeLibrary);
+		}
+
+		if (SP1LevelCount)
+		{
+			for (levelFileCount = 0; levelFileCount < SP1LevelCount; levelFileCount++)
+			{
+				free(levelFileIndex[levelFileCount]);
+			}
+
+			free(levelFileIndex);
+		}
+
 		if (LODFactor > 0.0f)
 		{
 			VirtualProtect((LPVOID)0x43AB52, sizeof(origLODbytes), PAGE_EXECUTE_READWRITE, &dwOldProtect);
@@ -792,17 +997,19 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 		if (*BorderlessWindowHooks != '0')
 		{
-			DetourRemove((PBYTE)O_AdjustWindowRectEx, (PBYTE)H_AdjustWindowRectEx);
-			DetourRemove((PBYTE)O_SetWindowPos, (PBYTE)H_SetWindowPos);
-			DetourRemove((PBYTE)O_ShowWindow, (PBYTE)H_ShowWindow);
-
-			if (*MinimizeOnFocusLost != '0')
+			if (O_WindowProc)
 			{
 				DetourRemove((PBYTE)O_WindowProc, (PBYTE)H_WindowProc);
 			}
+
+			DetourRemove((PBYTE)O_ShowWindow, (PBYTE)H_ShowWindow);
+			DetourRemove((PBYTE)O_SetWindowPos, (PBYTE)H_SetWindowPos);
+			DetourRemove((PBYTE)O_AdjustWindowRectEx, (PBYTE)H_AdjustWindowRectEx);
 		}
 
 		DetourRemove((PBYTE)O_RegSetValueEx, (PBYTE)H_RegSetValueEx);
+		DetourRemove((PBYTE)O_WinMain, (PBYTE)H_WinMain);
 	}
+
 	return TRUE;
 }
