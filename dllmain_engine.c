@@ -1,20 +1,19 @@
+#define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <stdlib.h>
 #include <string.h>
 #include <Windows.h>
 #include "detours.h"
 
-#pragma comment(lib, "detours.lib")
-
 #define NAKED __declspec(naked)
 
 BOOL space;
-BOOL modelinit;
+BOOL engineinit;
 BOOL modelmode;
+BOOL modelswitch;
 BOOL modelstate;
 BOOL modelstate2;
 DWORD stomptime;
-UINT timeout;
 
 void (*O_getmodelmode)(void);
 NAKED void H_getmodelmode(void)
@@ -37,7 +36,7 @@ BOOL WINAPI H_PeekMessage(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgF
 {
 	if (!modelmode)
 	{
-		if (!space && ((GetTickCount() - stomptime) > timeout))
+		if (!space && ((GetTickCount() - stomptime) > 100))
 		{
 			// sit tight in here until something interesting happens
 			return GetMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
@@ -48,6 +47,12 @@ BOOL WINAPI H_PeekMessage(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgF
 		return GetMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
 	}
 	return O_PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg);
+}
+
+void EngineInit(void)
+{
+	engineinit = DetourFunctionWithTrampoline((PBYTE)O_PeekMessage, (PBYTE)H_PeekMessage);
+	stomptime = GetTickCount();
 }
 
 LRESULT (CALLBACK *O_WindowProc)(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -78,15 +83,30 @@ LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			}
 			else if (wParam == 0x0D)
 			{
-				modelstate = FALSE;
-				if (modelinit)
+				if (!modelswitch)
 				{
 					modelstate2 = TRUE;
+					modelstate = FALSE;
 				}
 				else
 				{
-					modelinit = TRUE;
+					modelswitch = FALSE;
+					modelstate2 = FALSE;
+					modelstate = FALSE;
 				}
+			}
+			else if (wParam == 0x03)
+			{
+				modelswitch = TRUE;
+				modelstate = FALSE;
+			}
+			break;
+		}
+		case 0x7EF:
+		{
+			if (!engineinit)
+			{
+				EngineInit();
 			}
 			break;
 		}
@@ -96,11 +116,6 @@ LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 			{
 				space = !space;
 			}
-			break;
-		}
-		case WM_CREATE:
-		{
-			stomptime = GetTickCount();
 			break;
 		}
 		case WM_CLOSE:
@@ -125,11 +140,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		PIMAGE_DOS_HEADER pDosHeader;
 		PIMAGE_NT_HEADERS pNtHeader;
 		char szPath[MAX_PATH];
-		char *temp;
 		HMODULE hDInput;
 		HMODULE hDDraw;
 		int (WINAPI *PTR_SetAppCompatData)(int, int);
-		char szTimeout[8];
 
 		// not interested in those
 		DisableThreadLibraryCalls(hinstDLL);
@@ -159,28 +172,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			PTR_SetAppCompatData(12, 0);
 		}
 
-		// setup path to our config file, act according to config options
-		GetModuleFileName(NULL, szPath, MAX_PATH);
-		temp = strrchr(szPath, '\\') + 1;
-		*temp = '\0';
-		strcat(szPath, "Arokh.ini");
-
-		timeout = GetPrivateProfileInt("Misc", "Timeout", 1500, szPath);
-		if (timeout < 1000)
-		{
-			timeout = 1000;
-		}
-		else if (timeout > 5000)
-		{
-			timeout = 5000;
-		}
-
-		// ensure all configurable options end up in our config
-		WritePrivateProfileString("Misc", "Timeout", itoa(timeout, szTimeout, 10), szPath);
-
 		O_getmodelmode = (void (*)(void))DetourFunction((PBYTE)0x46944B, (PBYTE)H_getmodelmode);
 		O_WindowProc = (LRESULT (CALLBACK *)(HWND, UINT, WPARAM, LPARAM))DetourFunction((PBYTE)0x4134B0, (PBYTE)H_WindowProc);
-		DetourFunctionWithTrampoline((PBYTE)O_PeekMessage, (PBYTE)H_PeekMessage);
 	}
+
 	return TRUE;
 }

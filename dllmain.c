@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <stdio.h>
 #include <stdlib.h>
@@ -499,7 +500,7 @@ void H_LevelFileHook(void)
 
 	for (i = 0; i < SP1LevelCount; i++)
 	{
-		if (levelFileIndex[i] && !stricmp(szLevelName, levelFileIndex[i]))
+		if (levelFileIndex[i] && !_stricmp(szLevelName, levelFileIndex[i]))
 		{
 			match = TRUE;
 			break;
@@ -593,7 +594,7 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 	if (hModule)
 	{
 		size_t len = strlen(lpFileName);
-		if (len >= 10 && !stricmp(&lpFileName[len - 10], "Dragon.rfl"))
+		if (len >= 10 && !_stricmp(&lpFileName[len - 10], "Dragon.rfl"))
 		{
 			PIMAGE_NT_HEADERS pNtHeaders = (PIMAGE_NT_HEADERS)((PCHAR)hModule + ((PIMAGE_DOS_HEADER)hModule)->e_lfanew);
 
@@ -626,7 +627,7 @@ int CALLBACK H_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmd
 
 	temp = strrchr(szPath, '\\') + 1;
 
-	if (stricmp(temp, "Drakan.exe"))
+	if (_stricmp(temp, "Drakan.exe"))
 	{
 		if (MessageBox(NULL, "The executable file is not named Drakan.exe. This causes Invalid or corrupted level! error in multiplayer because server and clients must have matching executable file, including its name. Click OK to continue or Cancel to quit.", "Warning", MB_OKCANCEL | MB_ICONWARNING) == IDCANCEL)
 		{
@@ -798,7 +799,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		{
 			O_SetDisplayMode = (void (*)(void))DetourFunction((PBYTE)0x439330, (PBYTE)H_SetDisplayMode);
 
-			itoa(refreshRate, RefreshRate, 10);
+			_itoa(refreshRate, RefreshRate, 10);
 		}
 
 		GetPrivateProfileString("Misc", "LODFactor", "0.0", szLODFactor, sizeof(szLODFactor), szPath);
