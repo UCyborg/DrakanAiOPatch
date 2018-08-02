@@ -1,2 +1,6 @@
 EXPORTS
-DirectInputCreateA = FDirectInputCreate @1
+DirectInputCreateA	@1
+DirectInputCreateEx	@2
+DirectInputCreateW	@3
+DllCanUnloadNow		@4	PRIVATE
+DllGetClassObject	@5	PRIVATE

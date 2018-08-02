@@ -53,7 +53,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /machine:I386
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /machine:I386 /def:"dinput.def" /opt:nowin98
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /base:"0x67000000" /dll /machine:I386 /def:"dinput.def" /opt:nowin98
 # SUBTRACT LINK32 /pdb:none /debug
 
 !ELSEIF  "$(CFG)" == "dinput - Win32 Debug"
@@ -81,7 +81,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /debug /machine:I386 /pdbtype:sept
-# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /dll /debug /machine:I386 /def:"dinput.def" /pdbtype:sept /opt:nowin98
+# ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /base:"0x67000000" /dll /debug /machine:I386 /def:"dinput.def" /pdbtype:sept /opt:nowin98
 # SUBTRACT LINK32 /pdb:none
 
 !ENDIF 
@@ -95,12 +95,24 @@ LINK32=link.exe
 # PROP Default_Filter "cpp;c;cxx;rc;def;r;odl;idl;hpj;bat"
 # Begin Source File
 
+SOURCE=.\dinput.def
+# End Source File
+# Begin Source File
+
 SOURCE=.\dllmain.c
 # End Source File
 # End Group
 # Begin Group "Header Files"
 
 # PROP Default_Filter "h;hpp;hxx;hm;inl"
+# Begin Source File
+
+SOURCE=.\detours.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\gsmsalg.h
+# End Source File
 # End Group
 # Begin Group "Resource Files"
 

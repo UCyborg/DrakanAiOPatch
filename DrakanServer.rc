@@ -76,14 +76,14 @@ VS_VERSION_INFO VERSIONINFO
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904e4"
+        BLOCK "040904B0"
         BEGIN
             VALUE "Comments", "Launches Drakan: Order of the Flame dedicated server and restarts it if it crashes.\0"
             VALUE "CompanyName", "UCyborg\0"
             VALUE "FileDescription", "Drakan: OOTF Dedicated Server Launcher\0"
             VALUE "FileVersion", "1, 0, 0, 0\0"
             VALUE "InternalName", "DrakanServer\0"
-            VALUE "LegalCopyright", "Copyright © 2017 UCyborg\0"
+            VALUE "LegalCopyright", "Copyright © 2017 - 2018 UCyborg\0"
             VALUE "LegalTrademarks", "\0"
             VALUE "OriginalFilename", "DrakanServer.exe\0"
             VALUE "PrivateBuild", "\0"
@@ -94,7 +94,7 @@ BEGIN
     END
     BLOCK "VarFileInfo"
     BEGIN
-        VALUE "Translation", 0x409, 1252
+        VALUE "Translation", 0x409, 1200
     END
 END
 
