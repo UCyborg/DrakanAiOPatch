@@ -63,7 +63,7 @@ NAKED void H_getmodelmode(void)
 {
 	__asm
 	{
-		mov dword ptr ds:[modelFlags], eax
+		or dword ptr ds:[modelFlags], eax
 		push eax
 	}
 	DetourRemove((PBYTE)O_getmodelmode, (PBYTE)H_getmodelmode);
