@@ -31,6 +31,10 @@
 #define DIRECTINPUT_VERSION 0x0600
 #define DIRECTSOUND_VERSION 0x0600
 
+#if _MSC_VER >= 1400
+#include <intrin.h>
+#endif
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1443,16 +1447,68 @@ int H_OutputServerScoresTXT(char *file)
 	return ret;
 }
 
-void (__stdcall *O_CombineWithBasePath)(char *, char *, size_t);
-void __stdcall H_CombineWithBasePath(char *in, char *out, size_t len)
-{
-	DWORD_PTR retAddr;
+#if _MSC_VER >= 1400
+#define NAKEDCOND
+#else
+#define NAKEDCOND NAKED
+#endif
 
+void (__stdcall *O_CombineWithBasePath)(char *, char *, size_t);
+NAKEDCOND void __stdcall H_CombineWithBasePath(char *in, char *out, size_t len)
+{
+#if _MSC_VER < 1400
 	__asm
 	{
-		mov eax, dword ptr ss:[esp + 4h]
-		mov dword ptr ss:[retAddr], eax
+		mov eax, dword ptr ss:[esp]
+		sub eax, dword ptr ds:[hDragon]
+		cmp eax, 13d0b4h
+		ja label2
+		je label5
+		cmp eax, 0e49fh
+		ja label1
+		je label5
+		sub eax, 47f9h
+		jz label5
+		sub eax, 9b51h
+		jz label5
+		sub eax, 46h
+		jmp label4
+label1:
+		cmp eax, 38ec2h
+		je label5
+		cmp eax, 38f59h
+		jmp label4
+label2:
+		cmp eax, 14796ah
+		ja label3
+		je label5
+		cmp eax, 1435e9h
+		je label5
+		cmp eax, 1478b6h
+		jmp label4
+label3:
+		cmp eax, 159a4fh
+		je label5
+		cmp eax, 174586h
+label4:
+		je label5
+		jmp dword ptr ds:[O_CombineWithBasePath]
+label5:
+		mov eax, dword ptr ds:[O_CombineWithBasePath]
+		mov ecx, dword ptr ss:[esp + 0ch]
+		mov edx, dword ptr ss:[esp + 8h]
+		push ecx
+		mov dword ptr ds:[eax + 4h], offset homePath
+		mov eax, dword ptr ss:[esp + 8h]
+		push edx
+		push eax
+		call dword ptr ds:[O_CombineWithBasePath]
+		mov ecx, dword ptr ds:[O_CombineWithBasePath]
+		mov dword ptr ds:[ecx + 4], 487f1ch
+		retn 0ch
 	}
+#else
+	DWORD_PTR retAddr = (DWORD_PTR)_ReturnAddress();
 
 	switch (retAddr - (DWORD_PTR)hDragon)
 	{
@@ -1475,6 +1531,7 @@ void __stdcall H_CombineWithBasePath(char *in, char *out, size_t len)
 		default:
 			O_CombineWithBasePath(in, out, len);
 	}
+#endif
 }
 
 BOOL PerUserConfigAndSaves;
