@@ -2188,8 +2188,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		if (Location >= 1 && Location <= 13) _itoa(Location, (char *)0x481870, 10);
 
 		// read in list of levels for which we should apply 445SP1 patch
-		levelStr = _alloca(32768);
-		if (GetPrivateProfileSection("445SP1", levelStr, 32768, path))
+		levelStr = _alloca(1024);
+		if (GetPrivateProfileSection("445SP1", levelStr, 1024, path))
 		{
 			levellist_t *levellist_cur = malloc(sizeof(levellist_t));
 			if (!levellist_cur) goto fail;
@@ -2197,16 +2197,25 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
 			do
 			{
-				size_t len;
+				BOOL missingExt;
+				size_t len = strlen(levelStr);
 
-				levelStr = strchr(levelStr, '=') + 1;
-				len = strlen(levelStr) + 1;
+				if (len > 4 && !_stricmp((levelStr + len) - 4, ".lvl"))
+					missingExt = FALSE;
+				else
+					missingExt = TRUE;
 
-				levellist_cur->szLevelName = malloc(len);
+				len++;
+
+				levellist_cur->szLevelName = malloc(missingExt ? len + 4 : len);
 
 				if (levellist_cur->szLevelName)
 				{
-					strcpy(levellist_cur->szLevelName, levelStr);
+					if (!missingExt)
+						strcpy(levellist_cur->szLevelName, levelStr);
+					else
+						sprintf(levellist_cur->szLevelName, "%s%s", levelStr, ".lvl");
+
 					levelStr += len;
 
 					levellist_cur->next = *levelStr ? malloc(sizeof(levellist_t)) : NULL;
