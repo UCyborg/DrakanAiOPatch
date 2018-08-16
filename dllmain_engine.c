@@ -535,6 +535,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 				// feels more accurate that way
 				ticks_to_wait.LowPart = frequency.LowPart / (maxFPS - 1);
 			}
+
+			timeBeginPeriod(1);
 		}
 
 		if (!GetPrivateProfileInt("Refresh", "DontBlockOnInactivity", 0, path))
