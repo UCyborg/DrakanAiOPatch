@@ -1787,7 +1787,7 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 				O_FreeLibrary(hModule);
 				return NULL;
 			}
-			if (PECheckSum != 0x1B6528)
+			if (PECheckSum != 0x1B59C4)
 			{
 				OutputDebugString("H_LoadLibrary: Invalid Dragon.rfl");
 				O_FreeLibrary(hModule);
@@ -2053,7 +2053,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			OutputDebugString("DllMain: Failed to checksum Drakan.exe");
 			return TRUE;
 		}
-		if (PECheckSum != 0x92388)
+		if (PECheckSum != 0x955C0)
 		{
 			OutputDebugString("DllMain: Invalid Drakan.exe");
 			return TRUE;
