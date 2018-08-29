@@ -459,7 +459,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			OutputDebugString("DllMain: Failed to checksum Engine.exe");
 			return TRUE;
 		}
-		if (PECheckSum != 0xA3DE5)
+		if (PECheckSum != 0x96654)
 		{
 			OutputDebugString("DllMain: Invalid Engine.exe");
 			return TRUE;

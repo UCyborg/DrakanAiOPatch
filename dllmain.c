@@ -1787,7 +1787,7 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 				O_FreeLibrary(hModule);
 				return NULL;
 			}
-			if (PECheckSum != 0x1B59C4)
+			if (PECheckSum != 0x1BA61E)
 			{
 				OutputDebugString("H_LoadLibrary: Invalid Dragon.rfl");
 				O_FreeLibrary(hModule);
@@ -2053,7 +2053,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			OutputDebugString("DllMain: Failed to checksum Drakan.exe");
 			return TRUE;
 		}
-		if (PECheckSum != 0x955C0)
+		if (PECheckSum != 0x89E91)
 		{
 			OutputDebugString("DllMain: Invalid Drakan.exe");
 			return TRUE;
@@ -2182,6 +2182,14 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 				*temp = '\0';
 			}
 			else if (!ReadUserConfig(path, hinstDLL, lpvReserved)) return FALSE;
+		}
+
+		if (GetPrivateProfileInt("Misc", "ReportFakeDepthMask", 0, path))
+		{
+			dwPatchBase = 0x43A008;
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+			*(DWORD *)dwPatchBase = 0x90FFC883;
+			VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD), dwOldProtect, &dwOldProtect);
 		}
 
 		Location = GetPrivateProfileInt("Misc", "Location", 0, path);
