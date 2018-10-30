@@ -59,6 +59,9 @@
 
 #define NAKED __declspec(naked)
 
+#define EXE_CHECKSUM 0x89E91
+#define RFL_CHECKSUM 0x1B9740
+
 #define INI_NAME "Arokh.ini"
 
 // not sure what exactly causes this to be needed
@@ -947,7 +950,7 @@ DWORD WINAPI WinMM_timeGetTime(void)
 ****************************************************************
 */
 LARGE_INTEGER frequency;
-LARGE_INTEGER ticks_to_wait;
+double ticks_to_wait;
 BOOL useQPC;
 int (__fastcall *O_GameFrame)(void *, void *);
 int __fastcall H_GameFrame(void *This, void *unused)
@@ -963,7 +966,7 @@ int __fastcall H_GameFrame(void *This, void *unused)
 	for (;;)
 	{
 		LARGE_INTEGER ticks_passed;
-		LARGE_INTEGER ticks_left;
+		double ticks_left;
 
 		if (useQPC)
 			QueryPerformanceCounter(&t);
@@ -976,15 +979,15 @@ int __fastcall H_GameFrame(void *This, void *unused)
 
 		ticks_passed.QuadPart = t.QuadPart - prev_end_of_frame.QuadPart;
 
-		if (ticks_passed.QuadPart >= ticks_to_wait.QuadPart)
+		if (ticks_passed.QuadPart >= ticks_to_wait)
 			break;
 
-		ticks_left.QuadPart = ticks_to_wait.QuadPart - ticks_passed.QuadPart;
+		ticks_left = ticks_to_wait - ticks_passed.QuadPart;
 
 		// If > 0.002s left, do Sleep(1), which will actually sleep some
 		// steady amount, probably 1-2 ms,
 		// and do so in a nice way (CPU meter drops; laptop battery spared).
-		if (ticks_left.QuadPart > frequency.QuadPart * 2 / 1000)
+		if (ticks_left > frequency.QuadPart * 2 / 1000)
 			Sleep(1);
 	}
 
@@ -1038,7 +1041,7 @@ const BYTE ForwardBackCamPatch[] = { 0x89, 0x44, 0x24, 0x10, 0xE9, 0x41, 0x03, 0
 
 const BYTE AttackIntervalOrig[] = { 0x68, 0x33, 0x33, 0x33, 0x3F };
 // just a jump, the rest is in Dragon.rfl
-const BYTE AttackIntervalPatch[] = { 0xE9, 0xBA, 0x84, 0x10, 0x00 };
+const BYTE AttackIntervalPatch[] = { 0xE9, 0xB6, 0x84, 0x10, 0x00 };
 
 BOOL __stdcall Apply445SP1(BOOL patch)
 {
@@ -1152,7 +1155,7 @@ BOOL WINAPI DllMainError(HINSTANCE hinstDLL, LPVOID lpvReserved)
 
 char DisablePerformanceCounter[] = "0";
 char RefreshRate[4] = "0";
-char MaxFPS[4] = "0";
+char MaxFPS[16] = "0";
 char MinimizeOnFocusLost[] = "0";
 char ResizableDedicatedServerWindow[] = "0";
 char TCPPort[] = "28900";
@@ -1171,7 +1174,7 @@ BOOL __stdcall ReadUserConfig(char *path, HINSTANCE hinstDLL, LPVOID lpvReserved
 {
 	DWORD_PTR dwPatchBase;
 	DWORD dwOldProtect;
-	DWORD maxFPS;
+	float maxFPS;
 	size_t serverURLlength;
 	char szLODFactor[16];
 	char szFOVMultiplier[16];
@@ -1195,23 +1198,32 @@ BOOL __stdcall ReadUserConfig(char *path, HINSTANCE hinstDLL, LPVOID lpvReserved
 		if (!((PBYTE)O_SetDisplayMode = DetourFunction((PBYTE)0x439330, (PBYTE)H_SetDisplayMode))) goto fail;
 	}
 
-	if (maxFPS = GetPrivateProfileInt("Refresh", "MaxFPS", 59, path))
+	GetPrivateProfileString("Refresh", "MaxFPS", "59.93", MaxFPS, sizeof(MaxFPS), path);
+	maxFPS = (float)atof(MaxFPS);
+
+	if (maxFPS)
 	{
-		if (maxFPS < 15) maxFPS = 15;
-		else if (maxFPS > 500) maxFPS = 500;
-		_itoa(maxFPS, MaxFPS, 10);
+		if (maxFPS < 15.0f)
+		{
+			maxFPS = 15.0f;
+			sprintf(MaxFPS, "%f", maxFPS);
+		}
+		else if (maxFPS > 500.0f)
+		{
+			maxFPS = 500.0f;
+			sprintf(MaxFPS, "%f", maxFPS);
+		}
 
 		if (!((PBYTE)O_GameFrame = DetourFunction((PBYTE)0x43AF20, (PBYTE)H_GameFrame))) goto fail;
 
 		if (useQPC)
 		{
-			ticks_to_wait.QuadPart = frequency.QuadPart / maxFPS;
+			ticks_to_wait = frequency.QuadPart / maxFPS;
 		}
 		else
 		{
 			frequency.LowPart = 1000;
-			// feels more accurate that way
-			ticks_to_wait.LowPart = frequency.LowPart / (maxFPS - 1);
+			ticks_to_wait = frequency.LowPart / maxFPS;
 		}
 	}
 
@@ -1787,7 +1799,7 @@ HMODULE WINAPI H_LoadLibrary(LPCTSTR lpFileName)
 				O_FreeLibrary(hModule);
 				return NULL;
 			}
-			if (PECheckSum != 0x1BA61E)
+			if (PECheckSum != RFL_CHECKSUM)
 			{
 				OutputDebugString("H_LoadLibrary: Invalid Dragon.rfl");
 				O_FreeLibrary(hModule);
@@ -2053,7 +2065,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			OutputDebugString("DllMain: Failed to checksum Drakan.exe");
 			return TRUE;
 		}
-		if (PECheckSum != 0x89E91)
+		if (PECheckSum != EXE_CHECKSUM)
 		{
 			OutputDebugString("DllMain: Invalid Drakan.exe");
 			return TRUE;

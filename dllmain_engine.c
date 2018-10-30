@@ -27,8 +27,10 @@
 *****************************************************************
 */
 #define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <Windows.h>
 #include <ImageHlp.h>
 #include <ddraw.h>
@@ -45,132 +47,11 @@
 
 #define NAKED __declspec(naked)
 
+#define EXE_CHECKSUM 0x9F953
+
 // not sure what exactly causes this to be needed
 // uncomment if it crashes on Windows 9x
 #define WIN9X_HACK
-
-#define MDL_MODE	(1 << 0)
-#define MDL_SWITCH	(1 << 1)
-#define MDL_STATE	(1 << 2)
-#define MDL_STATE2	(1 << 3)
-
-BOOL space;
-DWORD modelFlags = MDL_SWITCH;
-DWORD stompTime;
-
-void (*O_getmodelmode)(void);
-NAKED void H_getmodelmode(void)
-{
-	__asm
-	{
-		or dword ptr ds:[modelFlags], eax
-		push eax
-	}
-	DetourRemove((PBYTE)O_getmodelmode, (PBYTE)H_getmodelmode);
-	__asm
-	{
-		pop eax
-		jmp dword ptr ds:[O_getmodelmode]
-	}
-}
-
-BOOL (WINAPI *O_PeekMessage)(LPMSG, HWND, UINT, UINT, UINT);
-BOOL WINAPI H_PeekMessage(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax, UINT wRemoveMsg)
-{
-	if (stompTime)
-	{
-		if (!(modelFlags & MDL_MODE))
-		{
-			if (!space && ((GetTickCount() - stompTime) > 500))
-			{
-				// sit tight in here until something interesting happens
-				return GetMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
-			}
-		}
-		else if (modelFlags & MDL_STATE)
-		{
-			return GetMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax);
-		}
-	}
-	return O_PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg);
-}
-
-LRESULT (CALLBACK *O_WindowProc)(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-LRESULT CALLBACK H_WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	switch (uMsg)
-	{
-		case 0x7EE:
-		{
-			if (wParam == 0x10)
-			{
-				stompTime = GetTickCount();
-			}
-			break;
-		}
-		case 0x7ED:
-		{
-			if (modelFlags & MDL_MODE)
-			{
-				if (!stompTime)
-				{
-					stompTime = GetTickCount();
-				}
-				if (wParam == 0x08)
-				{
-					if (!(modelFlags & MDL_STATE2))
-					{
-						modelFlags ^= MDL_STATE;
-					}
-					else
-					{
-						modelFlags &= ~MDL_STATE2;
-					}
-				}
-				else if (wParam == 0x0D)
-				{
-					if (!(modelFlags & MDL_SWITCH))
-					{
-						modelFlags |= MDL_STATE2;
-						modelFlags &= ~MDL_STATE;
-					}
-					else
-					{
-						modelFlags = MDL_MODE;
-					}
-				}
-				else if (wParam == 0x03)
-				{
-					modelFlags |= MDL_SWITCH;
-					modelFlags &= ~MDL_STATE;
-				}
-			}
-			break;
-		}
-		case 0x7EF:
-		{
-			if (!stompTime)
-			{
-				stompTime = GetTickCount();
-			}
-			break;
-		}
-		case WM_KEYDOWN:
-		{
-			if (wParam == VK_SPACE)
-			{
-				space = !space;
-			}
-			break;
-		}
-		case WM_CLOSE:
-		{
-			stompTime = 0;
-			break;
-		}
-	}
-	return O_WindowProc(hwnd, uMsg, wParam, lParam);
-}
 
 typedef struct displaymode_s
 {
@@ -210,10 +91,17 @@ DWORD WINAPI WinMM_timeGetTime(void)
 	return timeGetTime();
 }
 
-// Adapted from http://www.geisswerks.com/ryan/FAQS/timing.html
-// copyright (c)2002+ Ryan M. Geiss
+/*
+****************************************************************
+* Accurate frame limiter                                       *
+*                                                              *
+* Adapted from http://www.geisswerks.com/ryan/FAQS/timing.html *
+* copyright (c)2002+ Ryan M. Geiss                             *
+****************************************************************
+*/
+BOOL tbpCalled;
 LARGE_INTEGER frequency;
-LARGE_INTEGER ticks_to_wait;
+double ticks_to_wait;
 BOOL useQPC;
 int (__fastcall *O_GameFrame)(void *, void *);
 int __fastcall H_GameFrame(void *This, void *unused)
@@ -222,10 +110,16 @@ int __fastcall H_GameFrame(void *This, void *unused)
 	LARGE_INTEGER t;
 	int ret = O_GameFrame(This, unused);
 
+	if (!tbpCalled)
+	{
+		timeBeginPeriod(1);
+		tbpCalled = TRUE;
+	}
+
 	for (;;)
 	{
 		LARGE_INTEGER ticks_passed;
-		LARGE_INTEGER ticks_left;
+		double ticks_left;
 
 		if (useQPC)
 			QueryPerformanceCounter(&t);
@@ -238,21 +132,43 @@ int __fastcall H_GameFrame(void *This, void *unused)
 
 		ticks_passed.QuadPart = t.QuadPart - prev_end_of_frame.QuadPart;
 
-		if (ticks_passed.QuadPart >= ticks_to_wait.QuadPart)
+		if (ticks_passed.QuadPart >= ticks_to_wait)
 			break;
 
-		ticks_left.QuadPart = ticks_to_wait.QuadPart - ticks_passed.QuadPart;
+		ticks_left = ticks_to_wait - ticks_passed.QuadPart;
 
 		// If > 0.002s left, do Sleep(1), which will actually sleep some
 		// steady amount, probably 1-2 ms,
 		// and do so in a nice way (CPU meter drops; laptop battery spared).
-		if (ticks_left.QuadPart > frequency.QuadPart * 2 / 1000)
+		if (ticks_left > frequency.QuadPart * 2 / 1000)
 			Sleep(1);
 	}
 
 	prev_end_of_frame.QuadPart = t.QuadPart;
 
 	return ret;
+}
+
+BOOL (WINAPI *O_PeekMessage)(LPMSG, HWND, UINT, UINT, UINT);
+BOOL WINAPI H_PeekMessage(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax, UINT wRemoveMsg)
+{
+	if (!wMsgFilterMin && *(DWORD *)0x49309C & 1)
+	{
+		BOOL ret;
+
+		if (tbpCalled)
+		{
+			timeEndPeriod(1);
+			tbpCalled = FALSE;
+		}
+		if (!(ret = O_PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg)))
+		{
+			WaitMessage();
+		}
+
+		return ret;
+	}
+	return O_PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg);
 }
 
 // proxy stuff
@@ -425,7 +341,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 #ifdef WIN9X_HACK
 		OSVERSIONINFO osVersionInfo;
 #endif
-		DWORD maxFPS;
+		char MaxFPS[16];
+		float maxFPS;
 
 		// not interested in those
 		DisableThreadLibraryCalls(hinstDLL);
@@ -459,7 +376,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			OutputDebugString("DllMain: Failed to checksum Engine.exe");
 			return TRUE;
 		}
-		if (PECheckSum != 0x96654)
+		if (PECheckSum != EXE_CHECKSUM)
 		{
 			OutputDebugString("DllMain: Invalid Engine.exe");
 			return TRUE;
@@ -518,38 +435,40 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 		// setup path to our config file, act according to config options
 		strcpy(strrchr(path, '\\') + 1, "Arokh.ini");
 
-		if (maxFPS = GetPrivateProfileInt("Refresh", "MaxFPS", 59, path))
+		GetPrivateProfileString("Refresh", "MaxFPS", "59.93", MaxFPS, sizeof(MaxFPS), path);
+		maxFPS = (float)atof(MaxFPS);
+
+		if (maxFPS)
 		{
-			if (maxFPS < 15) maxFPS = 15;
-			else if (maxFPS > 500) maxFPS = 500;
+			if (maxFPS < 15.0f)
+			{
+				maxFPS = 15.0f;
+				sprintf(MaxFPS, "%f", maxFPS);
+			}
+			else if (maxFPS > 500.0f)
+			{
+				maxFPS = 500.0f;
+				sprintf(MaxFPS, "%f", maxFPS);
+			}
 
 			if (!((PBYTE)O_GameFrame = DetourFunction((PBYTE)0x43C600, (PBYTE)H_GameFrame))) goto fail;
 
 			if (useQPC = QueryPerformanceFrequency(&frequency))
 			{
-				ticks_to_wait.QuadPart = frequency.QuadPart / maxFPS;
+				ticks_to_wait = frequency.QuadPart / maxFPS;
 			}
 			else
 			{
 				frequency.LowPart = 1000;
-				// feels more accurate that way
-				ticks_to_wait.LowPart = frequency.LowPart / (maxFPS - 1);
+				ticks_to_wait = frequency.LowPart / (float)floor(maxFPS);
 			}
-
-			timeBeginPeriod(1);
 		}
 
-		if (!GetPrivateProfileInt("Refresh", "DontBlockOnInactivity", 0, path))
-		{
-			if (!((PBYTE)O_WindowProc = DetourFunction((PBYTE)0x4134B0, (PBYTE)H_WindowProc))) goto fail;
-			if (!((PBYTE)O_getmodelmode = DetourFunction((PBYTE)0x46944B, (PBYTE)H_getmodelmode))) goto fail;
-
-			dwPatchBase = 0x483340;
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD_PTR), PAGE_READWRITE, &dwOldProtect);
-			(DWORD_PTR)O_PeekMessage = *(DWORD_PTR *)dwPatchBase;
-			*(DWORD_PTR *)dwPatchBase = (DWORD_PTR)H_PeekMessage;
-			VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
-		}
+		dwPatchBase = 0x483340;
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD_PTR), PAGE_READWRITE, &dwOldProtect);
+		(DWORD_PTR)O_PeekMessage = *(DWORD_PTR *)dwPatchBase;
+		*(DWORD_PTR *)dwPatchBase = (DWORD_PTR)H_PeekMessage;
+		VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
 	}
 	else if (fdwReason == DLL_PROCESS_DETACH)
 	{
@@ -561,7 +480,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 			VirtualProtect((LPVOID)dwPatchBase, sizeof(DWORD_PTR), dwOldProtect, &dwOldProtect);
 		}
 
-		if (O_WindowProc) DetourRemove((PBYTE)O_WindowProc, (PBYTE)H_WindowProc);
 		if (O_GameFrame) DetourRemove((PBYTE)O_GameFrame, (PBYTE)H_GameFrame);
 
 		dwPatchBase = 0x483108;
